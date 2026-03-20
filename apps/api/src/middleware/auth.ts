@@ -15,6 +15,8 @@ declare module 'fastify' {
     userRole?: 'admin' | 'member';
     orgPlan?: string;
     authMethod?: 'api_key' | 'session';
+    /** Request-scoped DB client with RLS context set. Use this for all queries. */
+    scopedDb?: import('../lib/db.js').DbClient;
   }
 }
 

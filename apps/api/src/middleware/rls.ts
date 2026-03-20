@@ -1,56 +1,64 @@
+import * as schema from '@agentsy/db';
 import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import postgres from 'postgres';
 
 import type { DbClient } from '../lib/db.js';
 
 /**
  * RLS context middleware.
  *
- * For each authenticated request:
- * 1. Begins a transaction
- * 2. SET LOCAL app.org_id (only visible within the transaction)
- * 3. Commits on successful response
- * 4. Rolls back on error
- *
- * SET LOCAL requires an active transaction — without BEGIN, it's a no-op.
+ * For each authenticated request, acquires a **dedicated** connection from a
+ * single-connection pool so that BEGIN / SET LOCAL / queries / COMMIT all
+ * run on the same socket.  The scoped DB client is attached to
+ * `request.scopedDb` — route handlers should use `request.scopedDb ?? db`
+ * to ensure RLS applies.
  */
-export function registerRlsMiddleware(app: FastifyInstance, db: DbClient): void {
+export function registerRlsMiddleware(app: FastifyInstance, _db: DbClient): void {
   app.addHook('preHandler', async (request: FastifyRequest, _reply: FastifyReply) => {
     const orgId = request.orgId;
     if (!orgId) return;
 
-    // Begin transaction and set RLS context
-    await db.execute(sql`BEGIN`);
-    await db.execute(sql`SET LOCAL app.org_id = ${orgId}`);
+    const url = process.env['DATABASE_URL'];
+    if (!url) return;
 
-    // Mark that we have an open transaction to commit/rollback later
-    (request as RequestWithTx).hasTx = true;
+    // Reserve a single connection so the entire request stays on one socket
+    const reserved = postgres(url, { max: 1 });
+    const scopedDb = drizzle(reserved, { schema });
+
+    await scopedDb.execute(sql`BEGIN`);
+    await scopedDb.execute(sql.raw(`SET LOCAL app.org_id = '${orgId}'`));
+
+    const ext = request as RequestWithScoped;
+    ext.scopedDb = scopedDb;
+    ext._reservedConn = reserved;
   });
 
   // Commit on successful response
   app.addHook('onResponse', async (request: FastifyRequest, _reply: FastifyReply) => {
-    if ((request as RequestWithTx).hasTx) {
-      try {
-        await db.execute(sql`COMMIT`);
-      } catch {
-        // Already committed or connection issue — non-fatal
-      }
+    const ext = request as RequestWithScoped;
+    if (ext.scopedDb) {
+      try { await ext.scopedDb.execute(sql`COMMIT`); } catch { /* already committed */ }
+      try { await ext._reservedConn?.end(); } catch { /* best effort */ }
+      ext.scopedDb = undefined;
+      ext._reservedConn = undefined;
     }
   });
 
   // Rollback on error
   app.addHook('onError', async (request: FastifyRequest, _reply: FastifyReply, _error: Error) => {
-    if ((request as RequestWithTx).hasTx) {
-      try {
-        await db.execute(sql`ROLLBACK`);
-      } catch {
-        // Already rolled back or connection issue — non-fatal
-      }
-      (request as RequestWithTx).hasTx = false;
+    const ext = request as RequestWithScoped;
+    if (ext.scopedDb) {
+      try { await ext.scopedDb.execute(sql`ROLLBACK`); } catch { /* best effort */ }
+      try { await ext._reservedConn?.end(); } catch { /* best effort */ }
+      ext.scopedDb = undefined;
+      ext._reservedConn = undefined;
     }
   });
 }
 
-interface RequestWithTx extends FastifyRequest {
-  hasTx?: boolean;
+interface RequestWithScoped extends FastifyRequest {
+  scopedDb?: DbClient;
+  _reservedConn?: postgres.Sql;
 }

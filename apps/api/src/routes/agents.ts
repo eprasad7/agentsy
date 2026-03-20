@@ -24,6 +24,9 @@ const createAgentSchema = z.object({
     .max(63)
     .regex(/^[a-z0-9][a-z0-9-]*[a-z0-9]$/),
   description: z.string().max(2000).optional(),
+  // Optional initial version config (if omitted, empty defaults are used)
+  system_prompt: z.string().optional(),
+  model: z.string().optional(),
 });
 
 const updateAgentSchema = z.object({
@@ -101,6 +104,23 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
       updatedAt: now,
     });
 
+    // Create version 1 with empty defaults
+    const versionId = newId('ver');
+    await db.insert(agentVersions).values({
+      id: versionId,
+      agentId: id,
+      orgId,
+      version: 1,
+      systemPrompt: body.system_prompt ?? '',
+      model: body.model ?? 'claude-sonnet-4',
+      toolsConfig: [],
+      guardrailsConfig: {},
+      modelParams: {},
+      description: 'Initial version',
+      createdBy: request.userId ?? null,
+      createdAt: now,
+    });
+
     reply.status(201);
     return {
       id,
@@ -108,6 +128,8 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
       name: body.name,
       slug: body.slug,
       description: body.description ?? null,
+      version_id: versionId,
+      version: 1,
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
     };

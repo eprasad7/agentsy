@@ -56,7 +56,7 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
       total_tokens_in: 0, total_tokens_out: 0, total_cost_usd: 0,
       duration_ms: Date.now() - startedAt, failed_step_id: null,
     });
-    await activities.persistRun({ runId, status: 'failed', error: 'No agent version available', durationMs: Date.now() - startedAt });
+    await activities.persistRun({ runId, orgId, status: 'failed', error: 'No agent version available', durationMs: Date.now() - startedAt });
     return;
   }
 
@@ -149,7 +149,7 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
     });
     if (guardrailViolation) {
       await emitGuardrailViolation(runId, orgId, ++stepOrder, guardrailViolation, resolvedModel, {
-        totalTokensIn, totalTokensOut, totalCost, startedAt,
+        orgId, totalTokensIn, totalTokensOut, totalCost, startedAt,
       });
       return;
     }
@@ -219,7 +219,7 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
           });
         }
         await completeRun(runId, llmResult.text, resolvedModel, {
-          totalTokensIn, totalTokensOut, totalCost, startedAt,
+          orgId, totalTokensIn, totalTokensOut, totalCost, startedAt,
           metadata: { guardrail_triggered: 'output_validation', violations: validationResult.violations },
         });
       } else {
@@ -244,7 +244,7 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
               total_cost_usd: totalCost, duration_ms: Date.now() - startedAt, failed_step_id: null,
             });
             await activities.persistRun({
-              runId, status: 'failed', error: errorMsg,
+              runId, orgId, status: 'failed', error: errorMsg,
               output: { type: 'text', text: llmResult.text },
               totalTokensIn, totalTokensOut, totalCostUsd: totalCost,
               durationMs: Date.now() - startedAt, model: resolvedModel,
@@ -268,7 +268,7 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
           : { type: 'text' as const, text: llmResult.text };
 
         await completeRun(runId, llmResult.text, resolvedModel, {
-          totalTokensIn, totalTokensOut, totalCost, startedAt,
+          orgId, totalTokensIn, totalTokensOut, totalCost, startedAt,
           outputValid, outputValidation, runOutput,
         });
       }
@@ -374,7 +374,7 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
 
   // Max iterations
   await emitGuardrailViolation(runId, orgId, ++stepOrder, 'max_iterations', resolvedModel, {
-    totalTokensIn, totalTokensOut, totalCost, startedAt,
+    orgId, totalTokensIn, totalTokensOut, totalCost, startedAt,
   });
 
   // Still persist session messages with last output
@@ -409,7 +409,7 @@ function checkGuardrails(state: {
 
 async function emitGuardrailViolation(
   runId: string, orgId: string, stepOrder: number, reason: string, model: string,
-  state: { totalTokensIn: number; totalTokensOut: number; totalCost: number; startedAt: number },
+  state: { orgId?: string; totalTokensIn: number; totalTokensOut: number; totalCost: number; startedAt: number },
 ) {
   await activities.persistRunStep({ runId, orgId, stepOrder, type: 'guardrail', output: `${reason} exceeded` });
   await activities.emitRunEvent(runId, {
@@ -418,7 +418,7 @@ async function emitGuardrailViolation(
     total_cost_usd: state.totalCost, duration_ms: Date.now() - state.startedAt, failed_step_id: null,
   });
   await activities.persistRun({
-    runId, status: 'timeout', error: `Guardrail triggered: ${reason}`,
+    runId, orgId: state.orgId, status: 'timeout', error: `Guardrail triggered: ${reason}`,
     totalTokensIn: state.totalTokensIn, totalTokensOut: state.totalTokensOut,
     totalCostUsd: state.totalCost, durationMs: Date.now() - state.startedAt, model,
     metadata: { guardrail_triggered: reason },
@@ -429,6 +429,7 @@ async function emitGuardrailViolation(
 async function completeRun(
   runId: string, text: string, model: string,
   state: {
+    orgId?: string;
     totalTokensIn: number; totalTokensOut: number; totalCost: number; startedAt: number;
     metadata?: Record<string, unknown>;
     outputValid?: boolean | null;
@@ -444,7 +445,7 @@ async function completeRun(
     total_cost_usd: state.totalCost, duration_ms: Date.now() - state.startedAt, trace_id: null,
   });
   await activities.persistRun({
-    runId, status: 'completed', output,
+    runId, orgId: state.orgId, status: 'completed', output,
     totalTokensIn: state.totalTokensIn, totalTokensOut: state.totalTokensOut,
     totalCostUsd: state.totalCost, durationMs: Date.now() - state.startedAt, model,
     outputValid: state.outputValid ?? null,

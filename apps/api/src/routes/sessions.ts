@@ -78,14 +78,21 @@ export function sessionRoutes(app: FastifyInstance, db: DbClient): void {
     const orgId = request.orgId!;
     const body = createSessionSchema.parse(request.body ?? {});
 
-    // Verify agent exists
+    // Resolve agent by ID or slug
+    const agentParam = request.params.agent_id;
+    const isAgentId = agentParam.startsWith('ag_');
     const agentResult = await db
       .select({ id: agents.id })
       .from(agents)
-      .where(and(eq(agents.id, request.params.agent_id), eq(agents.orgId, orgId), isNull(agents.deletedAt)))
+      .where(and(
+        isAgentId ? eq(agents.id, agentParam) : eq(agents.slug, agentParam),
+        eq(agents.orgId, orgId),
+        isNull(agents.deletedAt),
+      ))
       .limit(1);
 
     if (!agentResult[0]) throw notFound('Agent not found');
+    const resolvedAgentId = agentResult[0].id;
 
     const id = newId('ses');
     const now = new Date();
@@ -93,7 +100,7 @@ export function sessionRoutes(app: FastifyInstance, db: DbClient): void {
     await db.insert(sessions).values({
       id,
       orgId,
-      agentId: request.params.agent_id,
+      agentId: resolvedAgentId,
       metadata: (body.metadata ?? {}) as SessionMetadata,
       createdAt: now,
       updatedAt: now,
@@ -103,7 +110,7 @@ export function sessionRoutes(app: FastifyInstance, db: DbClient): void {
     return {
       id,
       org_id: orgId,
-      agent_id: request.params.agent_id,
+      agent_id: resolvedAgentId,
       metadata: body.metadata ?? {},
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
@@ -115,9 +122,23 @@ export function sessionRoutes(app: FastifyInstance, db: DbClient): void {
     const orgId = request.orgId!;
     const query = listPaginationSchema.parse(request.query);
 
+    // Resolve agent by ID or slug
+    const agentParam = request.params.agent_id;
+    const isAgentId = agentParam.startsWith('ag_');
+    const agentLookup = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(
+        isAgentId ? eq(agents.id, agentParam) : eq(agents.slug, agentParam),
+        eq(agents.orgId, orgId),
+        isNull(agents.deletedAt),
+      ))
+      .limit(1);
+    if (!agentLookup[0]) throw notFound('Agent not found');
+
     const conditions = [
       eq(sessions.orgId, orgId),
-      eq(sessions.agentId, request.params.agent_id),
+      eq(sessions.agentId, agentLookup[0].id),
       isNull(sessions.deletedAt),
     ];
 

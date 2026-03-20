@@ -5,6 +5,7 @@ import {
   environments,
   runs,
   runSteps,
+  sessions,
   type RunMetadata,
 } from '@agentsy/db';
 import { newId } from '@agentsy/shared';
@@ -14,6 +15,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
+import { getDb } from '../lib/request-db.js';
 import { getTemporalClient } from '../lib/temporal.js';
 import { badRequest, notFound } from '../plugins/error-handler.js';
 import { handleSSEConnection } from '../streaming/sse-handler.js';
@@ -149,23 +151,49 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/agents/:agent_id/run — start a run
   app.post<{ Params: { agent_id: string } }>('/v1/agents/:agent_id/run', async (request, reply) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = createRunSchema.parse(request.body);
 
     if (body.stream && body.async) {
       throw badRequest('stream and async are mutually exclusive');
     }
 
-    // Verify agent exists
-    const agentResult = await db
+    // Resolve agent by ID or slug
+    const agentParam = request.params.agent_id;
+    const isId = agentParam.startsWith('ag_');
+    const agentResult = await d
       .select({ id: agents.id })
       .from(agents)
-      .where(and(eq(agents.id, request.params.agent_id), eq(agents.orgId, orgId), isNull(agents.deletedAt)))
+      .where(and(
+        isId ? eq(agents.id, agentParam) : eq(agents.slug, agentParam),
+        eq(agents.orgId, orgId),
+        isNull(agents.deletedAt),
+      ))
       .limit(1);
 
     if (!agentResult[0]) throw notFound('Agent not found');
+    const agentId = agentResult[0].id;
+
+    // Validate session ownership (if session_id provided)
+    if (body.session_id) {
+      const sesResult = await d
+        .select({ id: sessions.id, agentId: sessions.agentId })
+        .from(sessions)
+        .where(and(
+          eq(sessions.id, body.session_id),
+          eq(sessions.orgId, orgId),
+          isNull(sessions.deletedAt),
+        ))
+        .limit(1);
+
+      if (!sesResult[0]) throw notFound('Session not found');
+      if (sesResult[0].agentId !== agentId) {
+        throw badRequest('Session belongs to a different agent');
+      }
+    }
 
     // Resolve environment
-    const envResult = await db
+    const envResult = await d
       .select({ id: environments.id })
       .from(environments)
       .where(and(eq(environments.orgId, orgId), eq(environments.name, body.environment)))
@@ -177,20 +205,20 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
     // Resolve version: explicit version_id → active deployment → latest version
     let versionId: string | null = null;
     if (body.version_id) {
-      const verResult = await db
+      const verResult = await d
         .select({ id: agentVersions.id })
         .from(agentVersions)
-        .where(and(eq(agentVersions.id, body.version_id), eq(agentVersions.agentId, request.params.agent_id)))
+        .where(and(eq(agentVersions.id, body.version_id), eq(agentVersions.agentId, agentId)))
         .limit(1);
       if (!verResult[0]) throw notFound('Version not found');
       versionId = verResult[0].id;
     } else {
-      const depResult = await db
+      const depResult = await d
         .select({ versionId: deployments.versionId })
         .from(deployments)
         .where(
           and(
-            eq(deployments.agentId, request.params.agent_id),
+            eq(deployments.agentId, agentId),
             eq(deployments.environmentId, environmentId),
             eq(deployments.status, 'active'),
           ),
@@ -200,10 +228,10 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       if (depResult[0]) {
         versionId = depResult[0].versionId;
       } else {
-        const latestResult = await db
+        const latestResult = await d
           .select({ id: agentVersions.id })
           .from(agentVersions)
-          .where(eq(agentVersions.agentId, request.params.agent_id))
+          .where(eq(agentVersions.agentId, agentId))
           .orderBy(desc(agentVersions.version))
           .limit(1);
         if (latestResult[0]) {
@@ -222,10 +250,10 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       ...(body.metadata ?? {}),
     };
 
-    await db.insert(runs).values({
+    await d.insert(runs).values({
       id: runId,
       orgId,
-      agentId: request.params.agent_id,
+      agentId,
       versionId,
       sessionId: body.session_id ?? null,
       environmentId,

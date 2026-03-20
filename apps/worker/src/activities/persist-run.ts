@@ -1,8 +1,10 @@
 import { runs, createPgClient, eq } from '@agentsy/db';
 import type { RunOutput } from '@agentsy/shared';
+import { Redis } from 'ioredis';
 
 export interface PersistRunInput {
   runId: string;
+  orgId?: string;
   status: 'running' | 'completed' | 'failed' | 'cancelled' | 'timeout';
   output?: RunOutput;
   error?: string;
@@ -57,4 +59,20 @@ export async function persistRun(input: PersistRunInput): Promise<void> {
   }
 
   await database.update(runs).set(updates).where(eq(runs.id, input.runId));
+
+  // Release concurrent run slot on terminal states
+  if (['completed', 'failed', 'cancelled', 'timeout'].includes(input.status) && input.orgId) {
+    try {
+      const redisUrl = process.env['REDIS_URL'];
+      if (redisUrl) {
+        const redis = new Redis(redisUrl, { maxRetriesPerRequest: 1, connectTimeout: 2000 });
+        const key = `concurrent:${input.orgId}`;
+        const val = await redis.decr(key);
+        if (val < 0) await redis.set(key, '0');
+        await redis.quit();
+      }
+    } catch {
+      // Non-critical — TTL will clean up
+    }
+  }
 }
