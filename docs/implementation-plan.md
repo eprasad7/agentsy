@@ -3,7 +3,7 @@
 **Author**: Planning Agent
 **Date**: March 2026
 **Status**: Draft
-**References**: PRD v1, Architecture v1, Technology Decisions, Data Model Spec, API Spec, SDK Spec, Deployment Runbook, User Journeys, Agent Evolution Spec
+**References**: PRD v1, Architecture v1, Technology Decisions, Data Model Spec, API Spec, SDK Spec, Deployment Runbook, User Journeys, Agent Evolution Spec, Code Execution Spec
 
 ---
 
@@ -11,7 +11,7 @@
 
 ### Total Phases
 
-14 phases (Phase 0-12 + Phase 6b), mapping to PRD Milestones 1-4 (weeks 1-16) plus post-beta milestones. Each phase builds on the previous. A developer should complete phases sequentially; some sub-tasks within a phase can be parallelized.
+15 phases (Phase 0-12 + Phase 6b + Phase 11.5), mapping to PRD Milestones 1-4 (weeks 1-16) plus post-beta milestones. Each phase builds on the previous. A developer should complete phases sequentially; some sub-tasks within a phase can be parallelized.
 
 ### Phase-to-Milestone Mapping
 
@@ -30,6 +30,7 @@
 | 9 | CLI Polish & DX | Milestone 1-4 | 3-4 days |
 | 10 | Webhooks & Integration | Milestone 4 | 2-3 days |
 | 11 | Agent Git Repos & CI/CD | Post-beta | 5-7 days |
+| 11.5 | Code Execution (E2B Sandbox) | Post-beta | 5-7 days |
 | 12 | Auto-Evolution Engine | Post-beta | 7-10 days |
 
 ### Phase-to-Journey Mapping
@@ -54,7 +55,8 @@
 | J15 | CI/CD Integration | Phase 4 | Phase 9 |
 | J16 | Alerting & Notifications | Phase 8 | Phase 10 |
 | J18 | Agent Git Repo & CI/CD | Phase 11 | Phase 7, 9 |
-| J19 | Agent Auto-Evolution | Phase 12 | Phase 4, 11 |
+| J20 | Code Execution in Agent Runs | Phase 11.5 | Phase 6 |
+| J19 | Agent Auto-Evolution | Phase 12 | Phase 4, 11, 11.5 |
 
 ### Prerequisites (Accounts & Credentials)
 
@@ -1805,11 +1807,132 @@ Files to create:
 
 ---
 
+## Phase 11.5: Code Execution — E2B Sandbox (Journey 20)
+
+### Prerequisites
+- Phase 2 complete (agent runtime, tool execution via Temporal activities)
+- Phase 6 complete (tool system, approval gates, risk levels)
+- E2B account and API key
+
+### Steps
+
+#### 11.5.1 Implement sandbox provider abstraction
+
+**What**: A provider interface that abstracts sandbox lifecycle (create, execute, upload, download, destroy). E2B is the first implementation; the interface supports future Firecracker/self-hosted backends.
+**Spec reference**: spec-code-execution.md section 2 (Architecture), technology-decisions.md D-5.1.
+**Journey**: J20 foundation.
+**Acceptance criteria**: `SandboxProvider` interface defined with `create()` and `destroy()`. `E2BSandboxProvider` implements it using the E2B SDK. `Sandbox` object supports `execute()`, `uploadFile()`, `downloadFile()`, `installPackages()`. Provider is injected via config (swappable for tests).
+
+Files to create:
+- `apps/worker/src/sandbox/provider.ts` -- SandboxProvider interface and SandboxConfig types
+- `apps/worker/src/sandbox/e2b-provider.ts` -- E2B implementation using `@e2b/code-interpreter` SDK
+- `apps/worker/src/sandbox/types.ts` -- ExecutionResult, Language, SandboxMetadata types
+
+#### 11.5.2 Implement sandbox pool manager
+
+**What**: A warm pool of pre-created sandboxes to minimize cold start latency. Pool size is configurable per template.
+**Spec reference**: spec-code-execution.md section 4.1 (Pool Management).
+**Journey**: J20 (fast code execution).
+**Acceptance criteria**: Pool maintains N warm sandboxes per template. `acquire()` returns a warm sandbox in ~200ms. If pool is empty, falls back to cold creation (~2-4s). `release()` destroys the sandbox and replenishes the pool. Pool auto-scales based on usage. Sandbox timeout enforced (hard kill after limit).
+
+Files to create:
+- `apps/worker/src/sandbox/pool-manager.ts` -- Warm pool with acquire/release, auto-replenish, timeout enforcement
+
+#### 11.5.3 Implement execute_code built-in tool
+
+**What**: Register `execute_code` as a platform built-in tool. When an agent has `codeExecution.enabled: true`, the runtime injects this tool into the agent's tool list.
+**Spec reference**: spec-code-execution.md section 3 (Built-In Code Execution Tool).
+**Journey**: J20 step 1 (agent can execute code).
+**Acceptance criteria**: `execute_code` tool accepts `language`, `code`, optional `packages`, `files`, and `timeout_ms`. Runtime acquires sandbox, installs packages, creates input files, executes code, captures stdout/stderr/exit_code, returns structured result. Output truncated at 100KB stdout / 10KB stderr. Sandbox persists between calls within same run (if `persistFilesystem: true`). Sandbox destroyed when run completes.
+
+Files to create:
+- `apps/worker/src/sandbox/execute-code-tool.ts` -- Built-in tool registration, input validation, execution orchestration
+- `apps/worker/src/activities/code-execution-activity.ts` -- Temporal activity wrapping sandbox execute
+
+#### 11.5.4 Implement file I/O and run artifacts
+
+**What**: Input file mounting (inline + uploaded), output file capture, and persistent artifact storage (S3/R2).
+**Spec reference**: spec-code-execution.md section 7 (File & Data Passing), section 9.3 (Run Artifacts Table).
+**Journey**: J20 step 2 (agent reads/writes files in sandbox).
+**Acceptance criteria**: Inline `files` parameter creates files in sandbox before execution. User-uploaded files mounted at `/input/uploads/`. Files written to `/output/` captured after execution. Artifacts stored in S3/R2 with metadata in `run_artifacts` table. `GET /v1/runs/{runId}/artifacts` lists artifacts. `GET /v1/runs/{runId}/artifacts/{id}` downloads file. Size limits enforced (5MB inline, 10MB output total).
+
+Files to create:
+- `packages/db/src/schema/run-artifacts.ts` -- `run_artifacts` table definition
+- `apps/api/src/routes/run-artifacts.ts` -- Artifact list/download endpoints
+- `apps/api/src/routes/run-files.ts` -- File upload endpoint (`POST /v1/runs/{runId}/files`)
+- `apps/worker/src/sandbox/file-handler.ts` -- Input mounting, output capture, artifact storage
+
+#### 11.5.5 Implement codeExecution agent config
+
+**What**: Add `codeExecution` block to the SDK's `AgentConfig` type. Runtime reads this config to decide whether to inject `execute_code` and how to configure the sandbox.
+**Spec reference**: spec-code-execution.md section 8 (SDK Surface).
+**Journey**: J20 step 3 (developer enables code execution).
+**Acceptance criteria**: `agentsy.defineAgent({ codeExecution: { enabled: true, ... } })` validates config. When enabled, runtime appends code execution guidance to system prompt. `template`, `limits`, `network`, `persistFilesystem`, `packages`, and `approvalPolicy` are all configurable. Code execution disabled by default (opt-in).
+
+Files to modify:
+- `packages/sdk/src/types.ts` -- Add `CodeExecutionConfig` type and `codeExecution` field to `AgentConfig`
+- `packages/sdk/src/validation.ts` -- Add Zod schema for `CodeExecutionConfig`
+- `apps/worker/src/workflows/agent-run.ts` -- Inject `execute_code` tool when enabled, append system prompt guidance
+
+#### 11.5.6 Implement SSE stream events for code execution
+
+**What**: Real-time stream events for code execution lifecycle (started, completed, file_created, failed).
+**Spec reference**: spec-code-execution.md section 10.3 (SSE Stream Events).
+**Journey**: J20 step 4 (user sees code execution in real-time).
+**Acceptance criteria**: `code_execution.started` emitted when sandbox begins execution (includes language, code preview). `code_execution.completed` emitted on success (includes exit_code, execution_time, output preview). `code_execution.file_created` emitted per output file. `code_execution.failed` emitted on error. Events include step_id for trace correlation.
+
+Files to modify:
+- `apps/worker/src/streaming/event-emitter.ts` -- Add code execution event types
+- `apps/worker/src/sandbox/execute-code-tool.ts` -- Emit events during execution
+
+#### 11.5.7 Implement trace viewer code execution display
+
+**What**: Dashboard trace viewer shows code execution steps with syntax-highlighted code, output, and downloadable files.
+**Spec reference**: spec-code-execution.md section 12 (Dashboard UX).
+**Journey**: J20 step 5 (user inspects code execution in dashboard).
+**Acceptance criteria**: Code execution steps show: syntax-highlighted code block, stdout/stderr output, exit code and execution time, output file list with preview (images) and download links, sandbox metadata (template, memory, cost). Code block has copy button.
+
+Files to create:
+- `apps/web/src/components/code-execution-step.tsx` -- Code execution step component for trace viewer
+- `apps/web/src/components/artifact-preview.tsx` -- File preview (images, CSV, text) and download
+
+#### 11.5.8 Implement cost tracking and guardrails
+
+**What**: Track sandbox compute cost per run. Enforce per-run limits on execution count, total sandbox time, and cost.
+**Spec reference**: spec-code-execution.md section 6.4 (Cost Controls).
+**Journey**: J20 step 6 (code execution is cost-controlled).
+**Acceptance criteria**: Each sandbox execution tracks `execution_time_ms` and computes cost using per-second pricing. Running total maintained in workflow state. Run terminated with `guardrail_triggered` if `maxExecutionsPerRun`, `maxTotalSandboxTimeMs`, or `maxCostPerRunUsd` exceeded. Sandbox cost included in run's `total_cost_usd` and `usage_daily` aggregation.
+
+Files to modify:
+- `apps/worker/src/sandbox/execute-code-tool.ts` -- Add cost computation and guardrail checks
+- `packages/shared/src/pricing.ts` -- Add sandbox pricing constants
+
+### Tests (Phase 11.5)
+
+- **Unit**: `apps/worker/src/__tests__/sandbox/e2b-provider.test.ts` -- Sandbox create, execute, upload, download, destroy (mocked E2B SDK)
+- **Unit**: `apps/worker/src/__tests__/sandbox/pool-manager.test.ts` -- Pool acquire/release, auto-replenish, timeout
+- **Unit**: `apps/worker/src/__tests__/sandbox/execute-code-tool.test.ts` -- Input validation, output truncation, file handling, cost tracking
+- **Unit**: `apps/worker/src/__tests__/sandbox/file-handler.test.ts` -- Input mounting, output capture, size limits
+- **Integration**: `apps/worker/src/__tests__/sandbox/code-execution-e2e.test.ts` -- Full flow: acquire sandbox → execute Python → capture output → store artifact → destroy
+- **Integration**: `apps/api/src/__tests__/run-artifacts.test.ts` -- Artifact upload, list, download
+- **E2E**: Agent with code execution enabled → LLM generates Python → code executes → result used in response → artifacts downloadable
+
+### User Journey Verification
+
+- **J20**: Enable code execution on agent → run agent with data analysis request → agent writes Python → sandbox executes → output displayed in trace viewer → output files downloadable → cost tracked in usage
+
+### Definition of Done
+
+- Demo: Create agent with `codeExecution: { enabled: true, template: "data-science" }`. Send message: "Analyze this sales data and create a chart" with CSV file attached. Agent writes pandas code, executes in sandbox, generates matplotlib chart. Chart visible in trace viewer. Chart downloadable as PNG. Total run cost includes sandbox compute time.
+
+---
+
 ## Phase 12: Auto-Evolution Engine (Journey 19)
 
 ### Prerequisites
 - Phase 4 complete (eval engine — graders, datasets, experiments, baselines)
 - Phase 11 complete (agent Git repos, CI/CD pipelines)
+- Phase 11.5 complete (code execution — meta-agent uses execute_code for analysis)
 
 ### Steps
 
@@ -2335,6 +2458,7 @@ The following amendments address gaps identified during a comprehensive review o
 
 ### `packages/db/`
 - `src/schema/*.ts` -- All 25 table definitions (Phase 0)
+- `src/schema/run-artifacts.ts` -- `run_artifacts` table (Phase 11.5)
 - `src/schema/agent-repos.ts` -- `agent_repos` table (Phase 11)
 - `src/schema/evolution-sessions.ts` -- `evolution_sessions` table (Phase 12)
 - `src/schema/evolution-mutations.ts` -- `evolution_mutations` table (Phase 12)
@@ -2453,6 +2577,8 @@ The following amendments address gaps identified during a comprehensive review o
 - `src/routes/notifications.ts` -- Notifications (Phase 8)
 - `src/routes/webhooks.ts` -- Webhook CRUD (Phase 10)
 - `src/routes/connectors.ts` -- Connector catalog and connection management (Phase 6b)
+- `src/routes/run-artifacts.ts` -- Run artifact list/download (Phase 11.5)
+- `src/routes/run-files.ts` -- Run file upload (Phase 11.5)
 - `src/routes/agent-repos.ts` -- Agent repo metadata, commits, diff (Phase 11)
 - `src/routes/git-transport.ts` -- Git smart HTTP transport (Phase 11)
 - `src/routes/pipelines.ts` -- CI pipeline run list/detail (Phase 11)
@@ -2501,6 +2627,13 @@ The following amendments address gaps identified during a comprehensive review o
 - `src/jobs/webhook-delivery.ts` -- Webhook event delivery (Phase 10)
 - `src/jobs/token-refresh.ts` -- OAuth token auto-refresh (Phase 6b)
 - `src/tools/connector-executor.ts` -- Connector tool execution proxy (Phase 6b)
+- `src/sandbox/provider.ts` -- SandboxProvider interface (Phase 11.5)
+- `src/sandbox/e2b-provider.ts` -- E2B sandbox implementation (Phase 11.5)
+- `src/sandbox/types.ts` -- Sandbox types (Phase 11.5)
+- `src/sandbox/pool-manager.ts` -- Warm sandbox pool (Phase 11.5)
+- `src/sandbox/execute-code-tool.ts` -- Built-in execute_code tool (Phase 11.5)
+- `src/sandbox/file-handler.ts` -- File I/O for sandboxes (Phase 11.5)
+- `src/activities/code-execution-activity.ts` -- Code execution Temporal activity (Phase 11.5)
 - `src/workflows/ci-pipeline.ts` -- CI pipeline workflow (Phase 11)
 - `src/activities/ci-activities.ts` -- CI pipeline activities (Phase 11)
 - `src/workflows/evolution-session.ts` -- Evolution session workflow (Phase 12)
@@ -2546,6 +2679,8 @@ The following amendments address gaps identified during a comprehensive review o
 - `src/app/settings/billing/page.tsx` -- Billing/plan page (Phase 8)
 - `src/app/settings/alerts/page.tsx` -- Alert configuration (Phase 8)
 - `src/app/settings/webhooks/page.tsx` -- Webhook management (Phase 10)
+- `src/components/code-execution-step.tsx` -- Code execution trace viewer component (Phase 11.5)
+- `src/components/artifact-preview.tsx` -- File preview and download component (Phase 11.5)
 - `src/app/agents/[id]/ci-cd/page.tsx` -- CI/CD pipeline history (Phase 11)
 - `src/app/agents/[id]/repo/page.tsx` -- Repository browser (Phase 11)
 - `src/app/agents/[id]/evolution/page.tsx` -- Evolution dashboard tab (Phase 12)
@@ -2574,8 +2709,9 @@ Before declaring the platform ready for private beta (end of Milestone 4, week 1
 - [ ] Phase 9: CLI polished, hot reload, logs tail (with backend SSE endpoint), CI/CD docs
 - [ ] Phase 10: Webhooks with signature verification and retry
 - [ ] Phase 11: Agent Git repos, Git transport, push hooks, CI pipeline workflow, PR eval comparison, pipeline dashboard
-- [ ] Phase 12: Evolution data model, meta-agent, evolution loop workflow, scoring/regression, ledger, scheduled evolution, safety gates, evolution dashboard, CLI commands
-- [ ] All 19 user journeys verified end-to-end
+- [ ] Phase 11.5: Code execution via E2B sandbox, execute_code built-in tool, sandbox pool, file I/O, run artifacts, cost tracking, trace viewer integration
+- [ ] Phase 12: Evolution data model, meta-agent (with code execution), evolution loop workflow, scoring/regression, ledger, scheduled evolution, safety gates, evolution dashboard, CLI commands
+- [ ] All 20 user journeys verified end-to-end
 - [ ] Load test: 10 concurrent agent runs per org sustains without degradation
 - [ ] Security: cross-tenant isolation verified, secrets never logged, API keys hashed
 - [ ] Documentation: API docs, SDK docs, getting started guide published
