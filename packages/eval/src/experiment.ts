@@ -2,7 +2,7 @@ import type {
   ExperimentDefinition,
   ExperimentResult,
   CaseResult,
-  DatasetDefinition,
+  DatasetCase,
   GraderContext,
   ScoreResult,
 } from './types.js';
@@ -25,40 +25,96 @@ export function defineExperiment(def: ExperimentDefinition): Readonly<Experiment
 }
 
 /**
- * Run an experiment locally (in-process).
- * This is the local execution path used by the CLI.
- * The agent run is simulated — for real agent runs, use the Temporal workflow via the API.
+ * Case runner function type — executes a single agent run and returns results.
+ */
+export type CaseRunnerFn = (
+  caseData: DatasetCase,
+  index: number,
+) => Promise<{
+  output: string;
+  toolCalls: Array<{ name: string; arguments?: Record<string, unknown> }>;
+  steps: Array<{ type: string; toolName?: string; output?: string }>;
+  durationMs: number;
+  costUsd: number;
+}>;
+
+/**
+ * Default local case runner — when toolMode is "mock" and expected_output exists,
+ * returns the expected output directly (pure eval, no LLM call needed).
+ * Otherwise returns a placeholder.
+ */
+function defaultLocalRunner(toolMode: string): CaseRunnerFn {
+  return async (caseData) => {
+    const startTime = Date.now();
+
+    if (toolMode === 'mock' && caseData.expected_output) {
+      const output =
+        typeof caseData.expected_output === 'string'
+          ? caseData.expected_output
+          : 'text' in caseData.expected_output
+            ? caseData.expected_output.text
+            : JSON.stringify(caseData.expected_output);
+
+      return {
+        output,
+        toolCalls: (caseData.expected_tool_calls ?? []).map((t) => ({
+          name: t.name,
+          arguments: t.arguments,
+        })),
+        steps: (caseData.expected_tool_calls ?? []).map((t) => ({
+          type: 'tool_call' as const,
+          toolName: t.name,
+          output: 'mocked',
+        })),
+        durationMs: Date.now() - startTime,
+        costUsd: 0,
+      };
+    }
+
+    const inputText =
+      typeof caseData.input === 'string'
+        ? caseData.input
+        : 'text' in caseData.input
+          ? caseData.input.text
+          : JSON.stringify(caseData.input);
+
+    return {
+      output: `[local-mock] ${inputText.slice(0, 200)}`,
+      toolCalls: [],
+      steps: [],
+      durationMs: Date.now() - startTime,
+      costUsd: 0,
+    };
+  };
+}
+
+/**
+ * Run an experiment.
  *
- * @param experiment - Experiment definition
- * @param runCase - Function that executes a single agent run and returns the output + steps
+ * Self-contained API: if no `runCase` callback is provided, uses a default
+ * local runner (mock mode returns expected output, otherwise placeholder).
+ *
+ * For real agent execution via Temporal, pass a custom `runCase` callback
+ * or use the platform API (`POST /v1/eval/experiments`).
  */
 export async function runExperiment(
   experiment: ExperimentDefinition,
-  runCase: (
-    caseData: DatasetDefinition['cases'][number],
-    index: number,
-  ) => Promise<{
-    output: string;
-    toolCalls: Array<{ name: string; arguments?: Record<string, unknown> }>;
-    steps: Array<{ type: string; toolName?: string; output?: string }>;
-    durationMs: number;
-    costUsd: number;
-  }>,
+  runCase?: CaseRunnerFn,
 ): Promise<ExperimentResult> {
   const dataset =
     typeof experiment.dataset === 'string'
-      ? null // Remote dataset — caller must resolve
+      ? null
       : experiment.dataset;
 
   if (!dataset) {
     throw new Error('Local experiment run requires inline dataset (not a string reference)');
   }
 
+  const runner = runCase ?? defaultLocalRunner(experiment.toolMode ?? 'mock');
   const parallelism = experiment.parallelism ?? 5;
   const caseResults: CaseResult[] = [];
   const startTime = Date.now();
 
-  // Process cases with controlled parallelism
   const cases = dataset.cases;
   for (let batchStart = 0; batchStart < cases.length; batchStart += parallelism) {
     const batch = cases.slice(batchStart, batchStart + parallelism);
@@ -66,9 +122,8 @@ export async function runExperiment(
       batch.map(async (caseData, batchIndex) => {
         const caseIndex = batchStart + batchIndex;
         try {
-          const result = await runCase(caseData, caseIndex);
+          const result = await runner(caseData, caseIndex);
 
-          // Grade the result
           const context: GraderContext = {
             input: caseData.input,
             output: result.output,
@@ -85,7 +140,6 @@ export async function runExperiment(
             scores[grader.name] = score;
           }
 
-          // Case passes if average score >= 0.5
           const scoreValues = Object.values(scores).map((s) => s.score);
           const avgScore = scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length;
 
@@ -116,7 +170,6 @@ export async function runExperiment(
     caseResults.push(...batchResults);
   }
 
-  // Aggregate summary scores
   const summaryScores: Record<string, number> = {};
   const graderTotals: Record<string, { sum: number; count: number }> = {};
 

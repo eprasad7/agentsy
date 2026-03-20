@@ -4,6 +4,8 @@ import {
   evalExperiments,
   evalExperimentResults,
   evalBaselines,
+  runs,
+  runSteps,
   eq,
   and,
 } from '@agentsy/db';
@@ -44,9 +46,7 @@ export async function loadDatasetCases(input: LoadDatasetCasesInput): Promise<Ev
   const rows = await database
     .select()
     .from(evalDatasetCases)
-    .where(
-      and(eq(evalDatasetCases.datasetId, input.datasetId), eq(evalDatasetCases.orgId, input.orgId)),
-    )
+    .where(and(eq(evalDatasetCases.datasetId, input.datasetId), eq(evalDatasetCases.orgId, input.orgId)))
     .orderBy(evalDatasetCases.caseOrder);
 
   return rows.map((r) => ({
@@ -66,6 +66,7 @@ export interface RunAgentForEvalCaseInput {
   agentId: string;
   versionId: string;
   orgId: string;
+  environmentId: string;
   caseInput: RunInput;
   sessionHistory?: Array<{ role: string; content: string }>;
   mockedToolResults?: Array<{ toolName: string; argumentsMatch?: Record<string, unknown>; result: unknown }>;
@@ -73,30 +74,127 @@ export interface RunAgentForEvalCaseInput {
 }
 
 export interface RunAgentForEvalCaseOutput {
-  runId?: string;
+  runId: string;
   output: string;
   toolCalls: Array<{ name: string; arguments?: Record<string, unknown> }>;
   steps: Array<{ type: string; toolName?: string; output?: string }>;
   costUsd: number;
+  durationMs: number;
 }
 
+/**
+ * Activity: Run an agent against a single eval case.
+ * Creates a real run record and starts AgentRunWorkflow via Temporal.
+ * Tool mocking: mocked_tool_results stored in run metadata for the
+ * tool execution activity to intercept.
+ */
 export async function runAgentForEvalCase(
   input: RunAgentForEvalCaseInput,
 ): Promise<RunAgentForEvalCaseOutput> {
-  // In a full implementation, this would start a child AgentRunWorkflow
-  // with tool mocking. For now, we use a simplified in-process approach.
-  // The real integration happens when the eval workflow calls the agent run workflow
-  // via Temporal child workflow.
+  const database = getDb();
+  const startTime = Date.now();
 
-  // Placeholder: return mock output for now
-  // TODO(Phase 4.7): Integrate with actual AgentRunWorkflow via child workflow
-  const inputText = resolveInputText(input.caseInput);
+  // Create run row
+  const runId = newId('run');
+  const now = new Date();
+
+  await database.insert(runs).values({
+    id: runId,
+    orgId: input.orgId,
+    agentId: input.agentId,
+    versionId: input.versionId,
+    environmentId: input.environmentId,
+    status: 'queued',
+    input: input.caseInput,
+    metadata: {
+      source: 'eval' as const,
+      tool_mode: input.toolMode,
+      mocked_tool_results: input.mockedToolResults,
+    },
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  // Start AgentRunWorkflow via Temporal
+  try {
+    const { Client, Connection } = await import('@temporalio/client');
+
+    const address = process.env['TEMPORAL_ADDRESS'] ?? 'localhost:7233';
+    const namespace = process.env['TEMPORAL_NAMESPACE'] ?? 'default';
+    const cert = process.env['TEMPORAL_CLIENT_CERT'] ?? process.env['TEMPORAL_TLS_CERT'];
+    const key = process.env['TEMPORAL_CLIENT_KEY'] ?? process.env['TEMPORAL_TLS_KEY'];
+
+    const connOpts: Parameters<typeof Connection.connect>[0] = { address };
+    if (cert && key) {
+      connOpts.tls = { clientCertPair: { crt: Buffer.from(cert, 'utf-8'), key: Buffer.from(key, 'utf-8') } };
+    }
+
+    const connection = await Connection.connect(connOpts);
+    const client = new Client({ connection, namespace });
+
+    const workflowId = `eval-case-run-${runId}`;
+    const handle = await client.workflow.start('AgentRunWorkflow', {
+      taskQueue: process.env['TEMPORAL_TASK_QUEUE'] ?? 'agentsy-agent-runs',
+      workflowId,
+      args: [{
+        runId,
+        agentId: input.agentId,
+        versionId: input.versionId,
+        orgId: input.orgId,
+        input: input.caseInput,
+        environment: 'development',
+        environmentId: input.environmentId,
+      }],
+    });
+
+    await database.update(runs).set({ temporalWorkflowId: workflowId }).where(eq(runs.id, runId));
+
+    // Wait for workflow completion
+    await handle.result();
+  } catch (err) {
+    await database.update(runs).set({
+      status: 'failed',
+      error: `Eval run failed: ${err instanceof Error ? err.message : String(err)}`,
+      completedAt: new Date(),
+      updatedAt: new Date(),
+    }).where(eq(runs.id, runId));
+  }
+
+  // Load completed run + steps
+  const runResult = await database.select().from(runs).where(eq(runs.id, runId)).limit(1);
+  const runRow = runResult[0];
+
+  const stepsResult = await database
+    .select()
+    .from(runSteps)
+    .where(eq(runSteps.runId, runId))
+    .orderBy(runSteps.stepOrder);
+
+  let outputText = '';
+  if (runRow?.output && typeof runRow.output === 'object' && 'text' in runRow.output) {
+    outputText = (runRow.output as { text: string }).text;
+  }
+
+  const toolCalls = stepsResult
+    .filter((s) => s.type === 'tool_call' && s.toolName)
+    .map((s) => ({
+      name: s.toolName!,
+      arguments: s.input ? (JSON.parse(s.input) as Record<string, unknown>) : undefined,
+    }));
+
+  const steps = stepsResult.map((s) => ({
+    type: s.type,
+    toolName: s.toolName ?? undefined,
+    output: s.output ?? undefined,
+  }));
 
   return {
-    output: `[eval-mock] Response to: ${inputText.slice(0, 100)}`,
-    toolCalls: [],
-    steps: [],
-    costUsd: 0,
+    runId,
+    output: outputText,
+    toolCalls,
+    steps,
+    costUsd: runRow?.totalCostUsd ?? 0,
+    durationMs: Date.now() - startTime,
   };
 }
 
@@ -120,18 +218,10 @@ export interface GradeEvalCaseOutput {
 }
 
 export async function gradeEvalCase(input: GradeEvalCaseInput): Promise<GradeEvalCaseOutput> {
-  // Dynamic import to use the eval package graders
   const {
-    exactMatch,
-    jsonSchemaGrader,
-    regex,
-    numericThreshold,
-    embeddingSimilarity,
-    toolNameMatch,
-    toolArgsMatch,
-    llmJudge,
-    toolSequence,
-    unnecessarySteps,
+    exactMatch, jsonSchemaGrader, regex, numericThreshold,
+    embeddingSimilarity, toolNameMatch, toolArgsMatch,
+    llmJudge, toolSequence, unnecessarySteps,
   } = await import('@agentsy/eval');
 
   const scores: Record<string, { score: number; name: string; graderType: string; reasoning?: string }> = {};
@@ -151,40 +241,16 @@ export async function gradeEvalCase(input: GradeEvalCaseInput): Promise<GradeEva
     let grader: Awaited<ReturnType<typeof exactMatch>> | null = null;
 
     switch (graderConfig.type) {
-      case 'exact_match':
-        grader = exactMatch(c as Parameters<typeof exactMatch>[0]);
-        break;
-      case 'json_schema':
-        grader = jsonSchemaGrader((c['schema'] ?? c) as Record<string, unknown>);
-        break;
-      case 'regex':
-        grader = regex((c['pattern'] as string) ?? '');
-        break;
-      case 'numeric_threshold':
-        grader = numericThreshold(c as unknown as Parameters<typeof numericThreshold>[0]);
-        break;
-      case 'embedding_similarity':
-        grader = embeddingSimilarity(c as Parameters<typeof embeddingSimilarity>[0]);
-        break;
-      case 'tool_name_match':
-        grader = toolNameMatch(c as Parameters<typeof toolNameMatch>[0]);
-        break;
-      case 'tool_args_match':
-        grader = toolArgsMatch();
-        break;
-      case 'llm_judge':
-        grader = llmJudge({
-          rubric: (c['rubric'] as string) ?? '',
-          model: input.judgeModel ?? (c['model'] as string),
-          ...c,
-        } as unknown as Parameters<typeof llmJudge>[0]);
-        break;
-      case 'tool_sequence':
-        grader = toolSequence(c as Parameters<typeof toolSequence>[0]);
-        break;
-      case 'unnecessary_steps':
-        grader = unnecessarySteps();
-        break;
+      case 'exact_match': grader = exactMatch(c as Parameters<typeof exactMatch>[0]); break;
+      case 'json_schema': grader = jsonSchemaGrader((c['schema'] ?? c) as Record<string, unknown>); break;
+      case 'regex': grader = regex((c['pattern'] as string) ?? ''); break;
+      case 'numeric_threshold': grader = numericThreshold(c as unknown as Parameters<typeof numericThreshold>[0]); break;
+      case 'embedding_similarity': grader = embeddingSimilarity(c as Parameters<typeof embeddingSimilarity>[0]); break;
+      case 'tool_name_match': grader = toolNameMatch(c as Parameters<typeof toolNameMatch>[0]); break;
+      case 'tool_args_match': grader = toolArgsMatch(); break;
+      case 'llm_judge': grader = llmJudge({ rubric: (c['rubric'] as string) ?? '', model: input.judgeModel ?? (c['model'] as string), ...c } as unknown as Parameters<typeof llmJudge>[0]); break;
+      case 'tool_sequence': grader = toolSequence(c as Parameters<typeof toolSequence>[0]); break;
+      case 'unnecessary_steps': grader = unnecessarySteps(); break;
     }
 
     if (grader) {
@@ -193,11 +259,8 @@ export async function gradeEvalCase(input: GradeEvalCaseInput): Promise<GradeEva
     }
   }
 
-  // Case passes if average score >= 0.5
   const scoreValues = Object.values(scores).map((s) => s.score);
-  const avgScore = scoreValues.length > 0
-    ? scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length
-    : 0;
+  const avgScore = scoreValues.length > 0 ? scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length : 0;
 
   return { scores, passed: avgScore >= 0.5 };
 }
@@ -219,10 +282,8 @@ export interface PersistEvalResultInput {
 
 export async function persistEvalResult(input: PersistEvalResultInput): Promise<void> {
   const database = getDb();
-  const id = newId('exr');
-
   await database.insert(evalExperimentResults).values({
-    id,
+    id: newId('exr'),
     experimentId: input.experimentId,
     caseId: input.caseId,
     orgId: input.orgId,
@@ -254,10 +315,7 @@ export interface UpdateExperimentStatusInput {
 
 export async function updateExperimentStatus(input: UpdateExperimentStatusInput): Promise<void> {
   const database = getDb();
-  const updates: Record<string, unknown> = {
-    status: input.status,
-    updatedAt: new Date(),
-  };
+  const updates: Record<string, unknown> = { status: input.status, updatedAt: new Date() };
 
   if (input.summaryScores) updates['summaryScores'] = input.summaryScores;
   if (input.passedCases !== undefined) updates['passedCases'] = input.passedCases;
@@ -268,10 +326,7 @@ export async function updateExperimentStatus(input: UpdateExperimentStatusInput)
   if (input.startedAt) updates['startedAt'] = new Date(input.startedAt);
   if (input.completedAt) updates['completedAt'] = new Date(input.completedAt);
 
-  await database
-    .update(evalExperiments)
-    .set(updates)
-    .where(eq(evalExperiments.id, input.experimentId));
+  await database.update(evalExperiments).set(updates).where(eq(evalExperiments.id, input.experimentId));
 }
 
 // ── Activity: Auto-compare with Baseline ────────────────────────────
@@ -286,35 +341,27 @@ export interface AutoCompareInput {
 export async function autoCompareWithBaseline(input: AutoCompareInput): Promise<void> {
   const database = getDb();
 
-  // Find active baseline
   const baseline = await database
-    .select()
-    .from(evalBaselines)
-    .where(
-      and(
-        eq(evalBaselines.agentId, input.agentId),
-        eq(evalBaselines.datasetId, input.datasetId),
-        eq(evalBaselines.orgId, input.orgId),
-        eq(evalBaselines.isActive, true),
-      ),
-    )
+    .select().from(evalBaselines)
+    .where(and(
+      eq(evalBaselines.agentId, input.agentId),
+      eq(evalBaselines.datasetId, input.datasetId),
+      eq(evalBaselines.orgId, input.orgId),
+      eq(evalBaselines.isActive, true),
+    ))
     .limit(1);
 
-  if (!baseline[0]) return; // No baseline — nothing to compare
+  if (!baseline[0]) return;
 
-  // Load experiment results
   const experiment = await database
-    .select()
-    .from(evalExperiments)
+    .select().from(evalExperiments)
     .where(eq(evalExperiments.id, input.experimentId))
     .limit(1);
 
   if (!experiment[0] || experiment[0].status !== 'completed') return;
 
-  // Compute regression count
   const results = await database
-    .select()
-    .from(evalExperimentResults)
+    .select().from(evalExperimentResults)
     .where(eq(evalExperimentResults.experimentId, input.experimentId));
 
   const baselinePerCase = baseline[0].perCaseScores ?? {};
@@ -328,12 +375,11 @@ export async function autoCompareWithBaseline(input: AutoCompareInput): Promise<
       const baselineScore = baselineScores[graderName];
       if (baselineScore !== undefined && scoreData.score < baselineScore - 0.05) {
         regressions++;
-        break; // Count one regression per case
+        break;
       }
     }
   }
 
-  // Store regression count in experiment metadata
   if (regressions > 0) {
     const currentConfig = experiment[0].config ?? {};
     await database
@@ -344,17 +390,4 @@ export async function autoCompareWithBaseline(input: AutoCompareInput): Promise<
       })
       .where(eq(evalExperiments.id, input.experimentId));
   }
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────
-
-function resolveInputText(input: RunInput): string {
-  if (typeof input === 'object' && 'text' in input) return input.text;
-  if (typeof input === 'object' && 'messages' in input) {
-    return input.messages.map((m) => m.content).join('\n');
-  }
-  if (typeof input === 'object' && 'data' in input) {
-    return JSON.stringify(input.data);
-  }
-  return String(input);
 }

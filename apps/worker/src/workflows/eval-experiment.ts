@@ -13,6 +13,7 @@ export interface EvalExperimentInput {
   agentId: string;
   versionId: string;
   orgId: string;
+  environmentId: string;
   config: {
     toolMode?: 'mock' | 'dry-run' | 'live';
     graders?: Array<{
@@ -63,6 +64,7 @@ export async function EvalExperimentWorkflow(input: EvalExperimentInput): Promis
               agentId,
               versionId,
               orgId,
+              environmentId: input.environmentId,
               caseInput: caseData.input,
               sessionHistory: caseData.sessionHistory,
               mockedToolResults: caseData.mockedToolResults,

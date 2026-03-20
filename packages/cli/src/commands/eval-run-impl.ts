@@ -64,50 +64,8 @@ export async function runEvalCommand(opts: EvalRunOptions): Promise<void> {
     parallelism: opts.parallelism,
   });
 
-  // Run experiment locally
-  const result = await agentsyEval.run(experiment, async (caseData) => {
-    // In local mode, we use mock responses based on tool mode
-    // The real agent execution would happen through the local dev server
-    const inputText =
-      typeof caseData.input === 'string'
-        ? caseData.input
-        : 'text' in caseData.input
-          ? caseData.input.text
-          : JSON.stringify(caseData.input);
-
-    // For mock mode with mocked results, return expected output
-    if (opts.toolMode === 'mock' && caseData.expected_output) {
-      const output =
-        typeof caseData.expected_output === 'string'
-          ? caseData.expected_output
-          : 'text' in caseData.expected_output
-            ? caseData.expected_output.text
-            : JSON.stringify(caseData.expected_output);
-
-      return {
-        output,
-        toolCalls: (caseData.expected_tool_calls ?? []).map((t) => ({
-          name: t.name,
-          arguments: t.arguments,
-        })),
-        steps: (caseData.expected_tool_calls ?? []).map((t) => ({
-          type: 'tool_call' as const,
-          toolName: t.name,
-          output: 'mocked',
-        })),
-        durationMs: 0,
-        costUsd: 0,
-      };
-    }
-
-    return {
-      output: `[mock] ${inputText.slice(0, 200)}`,
-      toolCalls: [],
-      steps: [],
-      durationMs: 0,
-      costUsd: 0,
-    };
-  });
+  // Run experiment locally (uses built-in default runner)
+  const result = await agentsyEval.run(experiment);
 
   // Output results
   outputResults(result, opts.format);
@@ -136,23 +94,50 @@ async function handleCiMode(
   result: ExperimentResult,
   threshold: number,
 ): Promise<void> {
-  // In CI mode, check if any grader average dropped below threshold
-  // compared to baseline. For now, check against perfect scores.
-  const failedGraders = Object.entries(result.summaryScores).filter(
-    ([, avg]) => avg < 1.0 - threshold,
-  );
-
-  if (failedGraders.length > 0) {
-    console.error(
-      `\nCI REGRESSION: ${failedGraders.length} grader(s) below threshold:`,
-    );
-    for (const [name, avg] of failedGraders) {
-      console.error(`  ${name}: ${avg.toFixed(4)} (threshold: ${(1.0 - threshold).toFixed(4)})`);
-    }
-    process.exit(1);
+  // Try to load baseline from local file (baseline.json in project root)
+  let baselineScores: Record<string, number> | null = null;
+  try {
+    const { readFileSync } = await import('node:fs');
+    const baselinePath = `${process.cwd()}/baseline.json`;
+    const raw = readFileSync(baselinePath, 'utf-8');
+    const baseline = JSON.parse(raw) as { summaryScores?: Record<string, number> };
+    baselineScores = baseline.summaryScores ?? null;
+  } catch {
+    // No baseline file — fall back to pass rate check
   }
 
-  console.log('\nCI: All graders within threshold. Pass.');
+  if (baselineScores) {
+    // Compare against stored baseline — detect regressions
+    const regressions: Array<{ name: string; baseline: number; current: number; delta: number }> = [];
+    for (const [name, currentAvg] of Object.entries(result.summaryScores)) {
+      const baselineAvg = baselineScores[name];
+      if (baselineAvg !== undefined) {
+        const delta = currentAvg - baselineAvg;
+        if (delta < -threshold) {
+          regressions.push({ name, baseline: baselineAvg, current: currentAvg, delta });
+        }
+      }
+    }
+
+    if (regressions.length > 0) {
+      console.error(`\nCI REGRESSION: ${regressions.length} grader(s) regressed vs baseline:`);
+      for (const r of regressions) {
+        console.error(`  ${r.name}: ${r.current.toFixed(4)} (baseline: ${r.baseline.toFixed(4)}, delta: ${r.delta.toFixed(4)})`);
+      }
+      process.exit(1);
+    }
+
+    console.log('\nCI: No regressions vs baseline. Pass.');
+  } else {
+    // No baseline — check absolute pass rate
+    const failRate = result.totalCases > 0 ? result.failedCases / result.totalCases : 0;
+    if (failRate > threshold) {
+      console.error(`\nCI FAIL: ${result.failedCases}/${result.totalCases} cases failed (${(failRate * 100).toFixed(1)}%)`);
+      process.exit(1);
+    }
+
+    console.log(`\nCI: ${result.passedCases}/${result.totalCases} passed. No baseline found — consider saving one with 'agentsy eval run --save-baseline'.`);
+  }
 }
 
 function resolveGraders(config: Record<string, unknown>): GraderDefinition[] {

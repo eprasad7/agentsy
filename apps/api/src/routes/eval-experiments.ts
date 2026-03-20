@@ -29,23 +29,15 @@ const createExperimentSchema = z.object({
   agent_id: z.string().min(1),
   version_id: z.string().min(1),
   name: z.string().max(255).optional(),
-  config: z
-    .object({
-      tool_mode: z.enum(['mock', 'dry-run', 'live']).optional().default('mock'),
-      graders: z
-        .array(
-          z.object({
-            name: z.string(),
-            type: z.string(),
-            config: z.record(z.string(), z.unknown()).optional(),
-          }),
-        )
-        .min(1),
-      parallelism: z.coerce.number().int().min(1).max(20).optional().default(5),
-      judge_model: z.string().optional(),
-    })
-    .optional()
-    .default({ tool_mode: 'mock', graders: [{ name: 'exact_match', type: 'exact_match' }], parallelism: 5 }),
+  // Top-level fields per spec-api.md §7.11
+  graders: z.array(z.object({
+    name: z.string(),
+    type: z.string(),
+    config: z.record(z.string(), z.unknown()).optional(),
+  })).min(1),
+  tool_mode: z.enum(['mock', 'dry-run', 'live']).optional().default('mock'),
+  parallelism: z.coerce.number().int().min(1).max(20).optional().default(5),
+  judge_model: z.string().optional(),
   commit_sha: z.string().max(40).optional(),
   pr_number: z.coerce.number().int().optional(),
   ci_run_url: z.string().max(500).optional(),
@@ -181,10 +173,10 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
     const now = new Date();
 
     const config: ExperimentConfig = {
-      toolMode: body.config.tool_mode,
-      graders: body.config.graders,
-      parallelism: body.config.parallelism,
-      judgeModel: body.config.judge_model,
+      toolMode: body.tool_mode,
+      graders: body.graders,
+      parallelism: body.parallelism,
+      judgeModel: body.judge_model,
     };
 
     await db.insert(evalExperiments).values({
@@ -205,12 +197,21 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
       updatedAt: now,
     });
 
+    // Resolve environment for eval runs (use development by default)
+    const { environments } = await import('@agentsy/db');
+    const envRow = await db
+      .select({ id: environments.id })
+      .from(environments)
+      .where(and(eq(environments.orgId, orgId), eq(environments.name, 'development')))
+      .limit(1);
+    const environmentId = envRow[0]?.id ?? '';
+
     // Start Temporal workflow (best-effort — if Temporal is unavailable, experiment stays queued)
     try {
       const temporal = getTemporalClient();
       if (temporal) {
         await temporal.workflow.start('EvalExperimentWorkflow', {
-          taskQueue: 'agentsy-worker',
+          taskQueue: process.env['TEMPORAL_TASK_QUEUE'] ?? 'agentsy-agent-runs',
           workflowId: `eval-${id}`,
           args: [
             {
@@ -219,6 +220,7 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
               agentId: body.agent_id,
               versionId: body.version_id,
               orgId,
+              environmentId,
               config,
             },
           ],
