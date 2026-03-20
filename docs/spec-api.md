@@ -685,6 +685,8 @@ interface RunResult {
   model: string;
   trace_id: string;            // OTel trace ID
   tool_mode?: "mock" | "dry-run" | "live"; // Present on eval runs to indicate tool execution mode
+  output_valid: boolean | null; // Phase 4.5: null = text mode or legacy; true/false for json mode validation result
+  output_validation: { ok: boolean; errors?: Array<{ path: string; message: string }> } | null; // Phase 4.5: validation details when mode=json
   metadata: Record<string, unknown>;
   started_at: string;          // ISO 8601
   completed_at: string;        // ISO 8601
@@ -985,6 +987,8 @@ interface RunStep {
   approval_status?: "pending" | "approved" | "denied"; // For tool_call steps with write/admin risk_level. Null for non-approval steps.
   approved_by?: string | null; // user ID of approver (null if auto-approved or not applicable)
   approval_wait_ms?: number | null; // Milliseconds the run was paused waiting for approval
+  parsed_output?: unknown;     // Phase 4.5: parsed JSON object (json mode, final LLM step only)
+  output_validation?: { ok: boolean; errors?: Array<{ path: string; message: string }> } | null; // Phase 4.5
   metadata: StepMetadata;
   started_at: string | null;   // ISO 8601
   completed_at: string | null; // ISO 8601
@@ -3943,7 +3947,9 @@ Emitted when the entire run finishes successfully. This is the final event for s
 ```typescript
 interface RunCompletedEvent {
   run_id: string;              // run_...
-  output: RunOutput;           // Final agent response
+  output: RunOutput;           // Final agent response — for json mode, output.type="structured" with parsed data
+  output_valid?: boolean | null; // Phase 4.5: null for text mode; true/false for json mode
+  output_validation?: { ok: boolean; errors?: Array<{ path: string; message: string }> } | null; // Phase 4.5
   total_tokens_in: number;
   total_tokens_out: number;
   total_cost_usd: number;

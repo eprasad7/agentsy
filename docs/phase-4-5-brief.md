@@ -40,9 +40,11 @@ By the end of Phase 4.5:
    - For `mode: "json"`: request model output suitable for JSON (provider params as needed: e.g. Anthropic structured output / JSON mode where available; fall back to prompt contract + parse). **Spike first** — see Risks.
    - **Parse** final assistant text → `unknown`; validate against schema when provided.
    - Emit **structured validation** on the final message step and on **`runs`** (`output_valid`, `output_validation`) per **Strict policy**.
-4. **SSE / API**: Document and implement **streaming rules** for JSON mode (see Streaming Semantics); non-streaming path returns parsed object in run result when successful.
-5. **SDK**: `RunResult` / stream events expose `outputMode`, optional `parsedOutput`, optional `outputValidationError` (typed).
-6. **Eval**: Eval cases can omit explicit expected JSON when agent version defines schema; **`json_schema` grader** can default to **version schema** when case doesn’t override. Document in Phase 4 brief cross-link.
+4. **SSE / API**: `run.completed` event includes `output_valid` + `output_validation` fields. For json mode, `output` uses `{ type: "structured", data: {...} }` — no separate `parsed_output` on the run response (trace-level `parsed_output` lives on `run_steps` only). Streaming: Option A — raw token deltas, validate on completion.
+5. **SDK**: `RunResponse` exposes `outputValid` (nullable boolean) and `outputValidation` (typed). `RunStep` exposes `parsedOutput` and `outputValidation` for trace UX. Event type is `run.completed` (not `run_complete` or `message_complete`).
+6. **Per-run override**: **Not supported.** The response contract is immutable on the agent version. Callers cannot override `output_config` at run time.
+7. **Eval**: Eval cases can omit explicit expected JSON when agent version defines schema; **`json_schema` grader** can default to **version schema** when case doesn’t override.
+8. **OpenAI-compat**: Deferred — `response_format` on the OpenAI-compatible endpoint is additive and will be added in a follow-up.
 
 ---
 
@@ -75,9 +77,9 @@ Minimum bar for Phase 4.5:
 | mode | SSE `text_delta` | Final event |
 |------|-------------------|-------------|
 | `text` | Unchanged from Phase 3 | Final text |
-| `json` | **Option A (recommended for v1)**: deltas are **raw model tokens**; client **must not** parse partial JSON as final. Server emits `message_complete` with **full** `parsed` + validation once done. **Option B** (defer): validated incremental JSON / repair stream. |
+| `json` | **Option A (locked for v1)**: deltas are **raw model tokens**; client **must not** parse partial JSON as final. Server emits `run.completed` (the existing event — no new `message_complete` event type) with `output` containing the parsed structured data and `output_valid` / `output_validation` fields. **Option B** (defer to post-beta): validated incremental JSON / repair stream. |
 
-Document chosen option in `spec-api.md` and `architecture-v1.md` (streaming section).
+This is documented in `spec-api.md` § `run.completed` event and `spec-sdk.md` § `RunStreamRunComplete`.
 
 ---
 
@@ -124,7 +126,7 @@ run_steps + runs.output_valid / output_validation  →  SSE events  →  @agents
 
 - [ ] Add `ResponseOutputConfig` to `packages/sdk` and `packages/shared` as needed; mirror in `spec-sdk.md`.
 - [ ] `spec-data-model.md` § `agent_versions`: `output_config` column + TypeScript type.
-- [ ] `spec-api.md`: run creation optional override (if allowed) vs version-only; response fields for structured output.
+- [x] `spec-api.md`: **version-only** (no per-run override); `RunResult` includes `output_valid` + `output_validation`; `RunStep` includes `parsed_output` + `output_validation`; `run.completed` event extended.
 
 ### 4.5.2 Deploy path
 
@@ -178,13 +180,26 @@ run_steps + runs.output_valid / output_validation  →  SSE events  →  @agents
 
 ---
 
+## Validation Ordering (Locked)
+
+When the final LLM response is received (no tool calls):
+1. **Guardrail `outputValidation`** runs first (PII, on-topic, content policy, custom). These are safety checks.
+2. **Response contract JSON validation** runs second (parse JSON, validate against schema). This is structural.
+3. If guardrails fail, run completes with guardrail metadata (regardless of JSON validation).
+4. If guardrails pass but JSON validation fails, strict policy applies (fail or complete with `output_valid=false`).
+
+---
+
 ## Common Mistakes
 
 | Mistake | Correct approach |
 |---------|------------------|
-| Validating partial stream | Validate only on **final** aggregated assistant text for `json` mode (unless Option B). |
+| Validating partial stream | Validate only on **final** aggregated assistant text for `json` mode. |
 | Schema only in eval | Schema lives on **agent version**; eval **inherits** or overrides per case. |
 | `any` for parsed output | `unknown` + schema validation; SDK narrows with generic helper if needed. |
+| Duplicate parsed JSON at top-level | Parsed JSON goes into `output.data` (as `{ type: "structured" }`). No `parsed_output` on run response — that's trace-only on `run_steps`. |
+| New event type for JSON completion | Use existing `run.completed` event. No `message_complete` event. |
+| Per-run override of output config | Not supported. Contract is version-only and immutable. |
 
 ---
 

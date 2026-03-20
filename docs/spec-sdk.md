@@ -412,6 +412,20 @@ export interface AgentConfig {
   modelParams?: ModelParams;
 
   /**
+   * Response output contract (Phase 4.5). Defines whether the agent returns
+   * plain text or structured JSON, with optional JSON Schema validation.
+   * Maps to: agent_versions.output_config (ResponseOutputConfig JSONB)
+   *
+   * - mode "text" (default): standard text output, no validation.
+   * - mode "json": LLM is instructed to return JSON. Output is parsed and
+   *   optionally validated against json_schema.
+   * - strict: true → run fails on validation error; false → run completes
+   *   with output_valid=false.
+   * - Per-run override: NOT supported. Contract is immutable on the version.
+   */
+  output?: ResponseOutputConfig;
+
+  /**
    * Code execution configuration — enables the built-in execute_code tool
    * backed by E2B sandboxed microVMs. When enabled, the agent can write and
    * run Python/JS code for data analysis, file processing, and computation.
@@ -1354,11 +1368,19 @@ export interface RunResponse {
   /** Run status. For sync runs, always "completed" on success. */
   status: "completed" | "failed" | "timeout" | "cancelled";
 
-  /** The agent's final output. Maps to: runs.output (JSONB) */
+  /** The agent's final output. Maps to: runs.output (JSONB)
+   * For json mode: output.type="structured" with parsed data in output.data.
+   * For text mode: output.type="text" with raw text in output.text. */
   output: RunOutput;
 
   /** Error message if status is "failed". */
   error?: string;
+
+  /** Phase 4.5: null for text mode or legacy runs; true/false for json mode. Maps to: runs.output_valid */
+  outputValid?: boolean | null;
+
+  /** Phase 4.5: validation details when mode=json. Maps to: runs.output_validation */
+  outputValidation?: { ok: boolean; errors?: Array<{ path: string; message: string }> } | null;
 
   /** Token usage for the entire run. */
   usage: {
@@ -1440,8 +1462,8 @@ export interface RunStreamStepComplete {
 }
 
 export interface RunStreamRunComplete {
-  type: "run_complete";
-  /** The full run response. */
+  type: "run.completed";
+  /** The full run response. Includes output_valid / output_validation for json mode agents. */
   output: RunResponse;
 }
 
@@ -1485,6 +1507,10 @@ export interface RunStep {
   durationMs?: number;
   /** Error message if this step failed. Maps to: run_steps.error */
   error?: string;
+  /** Phase 4.5: parsed JSON object (json mode, final LLM step only). Maps to: run_steps.parsed_output */
+  parsedOutput?: unknown;
+  /** Phase 4.5: validation result (json mode only). Maps to: run_steps.output_validation */
+  outputValidation?: { ok: boolean; errors?: Array<{ path: string; message: string }> } | null;
   /** Step metadata. Maps to: run_steps.metadata */
   metadata?: Record<string, unknown>;
   /** ISO 8601 timestamps. */

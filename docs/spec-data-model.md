@@ -517,6 +517,20 @@ type ModelParams = {
   maxOutputTokens?: number;
   stopSequences?: string[];
 };
+
+// Phase 4.5: Response output contract
+type ResponseOutputConfig = {
+  mode: "text" | "json";              // Default: "text"
+  json_schema?: Record<string, unknown>; // JSON Schema; only valid when mode="json"
+  strict?: boolean;                    // true → fail run on validation error; false → completed with output_valid=false
+  schema_version?: string;             // Forward compat; default "1"
+};
+
+// Validation result stored on runs + run_steps
+type OutputValidationResult = {
+  ok: boolean;
+  errors?: Array<{ path: string; message: string }>;
+};
 ```
 
 **Note**: No `updated_at` because versions are immutable. No soft delete; versions are permanent records.
@@ -691,6 +705,8 @@ export const runs = pgTable(
     model: varchar("model", { length: 100 }), // primary model used
     temporalWorkflowId: varchar("temporal_workflow_id", { length: 255 }),
     traceId: varchar("trace_id", { length: 64 }), // OpenTelemetry trace ID
+    outputValid: boolean("output_valid"), // Phase 4.5: null = text mode or legacy; true/false for json mode
+    outputValidation: jsonb("output_validation").$type<OutputValidationResult>(), // Phase 4.5: { ok, errors? } when mode=json
     metadata: jsonb("metadata").$type<RunMetadata>().default({}),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -783,6 +799,8 @@ export const runSteps = pgTable(
     approvalResolvedBy: varchar("approval_resolved_by", { length: 255 }), // user_id (Better Auth)
     approvalResolvedAt: timestamp("approval_resolved_at", { withTimezone: true }),
     approvalWaitStartedAt: timestamp("approval_wait_started_at", { withTimezone: true }), // for measuring approval latency
+    parsedOutput: jsonb("parsed_output"), // Phase 4.5: parsed JSON object (json mode only, final LLM step)
+    outputValidation: jsonb("output_validation").$type<OutputValidationResult>(), // Phase 4.5: { ok, errors? } (json mode only)
     metadata: jsonb("metadata").$type<StepMetadata>().default({}),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
