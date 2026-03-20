@@ -45,7 +45,7 @@ const createExperimentSchema = z.object({
       judge_model: z.string().optional(),
     })
     .optional()
-    .default({ graders: [{ name: 'exact_match', type: 'exact_match' }] }),
+    .default({ tool_mode: 'mock', graders: [{ name: 'exact_match', type: 'exact_match' }], parallelism: 5 }),
   commit_sha: z.string().max(40).optional(),
   pr_number: z.coerce.number().int().optional(),
   ci_run_url: z.string().max(500).optional(),

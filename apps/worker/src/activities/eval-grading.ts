@@ -147,18 +147,45 @@ export async function gradeEvalCase(input: GradeEvalCaseInput): Promise<GradeEva
   };
 
   for (const graderConfig of input.graders) {
-    const grader = createGrader(graderConfig, input.judgeModel, {
-      exactMatch,
-      jsonSchemaGrader,
-      regex,
-      numericThreshold,
-      embeddingSimilarity,
-      toolNameMatch,
-      toolArgsMatch,
-      llmJudge,
-      toolSequence,
-      unnecessarySteps,
-    });
+    const c = graderConfig.config ?? {};
+    let grader: Awaited<ReturnType<typeof exactMatch>> | null = null;
+
+    switch (graderConfig.type) {
+      case 'exact_match':
+        grader = exactMatch(c as Parameters<typeof exactMatch>[0]);
+        break;
+      case 'json_schema':
+        grader = jsonSchemaGrader((c['schema'] ?? c) as Record<string, unknown>);
+        break;
+      case 'regex':
+        grader = regex((c['pattern'] as string) ?? '');
+        break;
+      case 'numeric_threshold':
+        grader = numericThreshold(c as unknown as Parameters<typeof numericThreshold>[0]);
+        break;
+      case 'embedding_similarity':
+        grader = embeddingSimilarity(c as Parameters<typeof embeddingSimilarity>[0]);
+        break;
+      case 'tool_name_match':
+        grader = toolNameMatch(c as Parameters<typeof toolNameMatch>[0]);
+        break;
+      case 'tool_args_match':
+        grader = toolArgsMatch();
+        break;
+      case 'llm_judge':
+        grader = llmJudge({
+          rubric: (c['rubric'] as string) ?? '',
+          model: input.judgeModel ?? (c['model'] as string),
+          ...c,
+        } as unknown as Parameters<typeof llmJudge>[0]);
+        break;
+      case 'tool_sequence':
+        grader = toolSequence(c as Parameters<typeof toolSequence>[0]);
+        break;
+      case 'unnecessary_steps':
+        grader = unnecessarySteps();
+        break;
+    }
 
     if (grader) {
       const result = await grader.grade(context);
@@ -173,43 +200,6 @@ export async function gradeEvalCase(input: GradeEvalCaseInput): Promise<GradeEva
     : 0;
 
   return { scores, passed: avgScore >= 0.5 };
-}
-
-function createGrader(
-  config: { name: string; type: string; config?: Record<string, unknown> },
-  judgeModel: string | undefined,
-  graders: Record<string, (...args: unknown[]) => unknown>,
-): { grade: (context: unknown) => Promise<{ score: number; name: string; graderType: string; reasoning?: string }> } | null {
-  const c = config.config ?? {};
-
-  switch (config.type) {
-    case 'exact_match':
-      return graders.exactMatch(c) as ReturnType<typeof graders.exactMatch>;
-    case 'json_schema':
-      return graders.jsonSchemaGrader(c['schema'] ?? c) as ReturnType<typeof graders.jsonSchemaGrader>;
-    case 'regex':
-      return graders.regex(c['pattern'] as string ?? '') as ReturnType<typeof graders.regex>;
-    case 'numeric_threshold':
-      return graders.numericThreshold(c) as ReturnType<typeof graders.numericThreshold>;
-    case 'embedding_similarity':
-      return graders.embeddingSimilarity(c) as ReturnType<typeof graders.embeddingSimilarity>;
-    case 'tool_name_match':
-      return graders.toolNameMatch(c) as ReturnType<typeof graders.toolNameMatch>;
-    case 'tool_args_match':
-      return graders.toolArgsMatch() as ReturnType<typeof graders.toolArgsMatch>;
-    case 'llm_judge':
-      return graders.llmJudge({
-        rubric: c['rubric'] as string ?? '',
-        model: judgeModel ?? c['model'] as string,
-        ...c,
-      }) as ReturnType<typeof graders.llmJudge>;
-    case 'tool_sequence':
-      return graders.toolSequence(c) as ReturnType<typeof graders.toolSequence>;
-    case 'unnecessary_steps':
-      return graders.unnecessarySteps() as ReturnType<typeof graders.unnecessarySteps>;
-    default:
-      return null;
-  }
 }
 
 // ── Activity: Persist Eval Result ───────────────────────────────────

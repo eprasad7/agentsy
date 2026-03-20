@@ -13,6 +13,7 @@ import {
   type GraderDefinition,
   type ExperimentResult,
 } from '@agentsy/eval';
+
 import { formatTable, formatJson, formatMarkdown } from '../formatters/eval-report.js';
 
 export interface EvalRunOptions {
@@ -56,8 +57,8 @@ export async function runEvalCommand(opts: EvalRunOptions): Promise<void> {
   // Define experiment
   const experiment = agentsyEval.defineExperiment({
     name: `cli-eval-${Date.now()}`,
-    agent: { slug: config.agent?.slug },
-    dataset,
+    agent: { slug: (config.agent as Record<string, unknown> | undefined)?.slug as string | undefined },
+    dataset: dataset as unknown as import('@agentsy/eval').DatasetDefinition,
     graders,
     toolMode: opts.toolMode,
     parallelism: opts.parallelism,
@@ -173,15 +174,15 @@ function resolveGraders(config: Record<string, unknown>): GraderDefinition[] {
         case 'regex':
           return regex((g.config?.['pattern'] as string) ?? '');
         case 'numeric_threshold':
-          return numericThreshold(g.config as Parameters<typeof numericThreshold>[0]);
+          return numericThreshold(g.config as unknown as Parameters<typeof numericThreshold>[0]);
         case 'embedding_similarity':
-          return embeddingSimilarity(g.config as Parameters<typeof embeddingSimilarity>[0]);
+          return embeddingSimilarity(g.config as unknown as Parameters<typeof embeddingSimilarity>[0]);
         case 'tool_name_match':
-          return toolNameMatch(g.config as Parameters<typeof toolNameMatch>[0]);
+          return toolNameMatch(g.config as unknown as Parameters<typeof toolNameMatch>[0]);
         case 'tool_args_match':
           return toolArgsMatch();
         case 'llm_judge':
-          return llmJudge(g.config as Parameters<typeof llmJudge>[0]);
+          return llmJudge(g.config as unknown as Parameters<typeof llmJudge>[0]);
         case 'tool_sequence':
           return toolSequence(g.config as Parameters<typeof toolSequence>[0]);
         case 'unnecessary_steps':
