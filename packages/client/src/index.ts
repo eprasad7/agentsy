@@ -22,4 +22,4 @@ export {
   ServerError,
 } from './errors.js';
 
-export { parseSSEStream } from './streaming.js';
+export { parseSSEStream, type SSEEvent } from './streaming.js';

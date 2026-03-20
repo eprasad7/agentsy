@@ -54,27 +54,59 @@ export class AgentsyHttpClient {
 
   /**
    * Raw POST that returns the Response object (for streaming).
+   * Includes retry logic for 429/5xx errors.
    */
   async rawPost(path: string, body: unknown): Promise<Response> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
+      'Accept': 'text/event-stream',
       ...this.defaultHeaders,
     };
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
-    });
+    let lastError: Error | undefined;
 
-    if (!response.ok) {
-      const errorBody = await response.json().catch(() => ({})) as Record<string, unknown>;
-      throw createErrorFromResponse(response.status, errorBody);
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      try {
+        const controller = new AbortController();
+        // Use a longer timeout for streaming (5 min) — the connection stays open
+        const streamTimeout = Math.max(this.timeout, 300_000);
+        const timer = setTimeout(() => controller.abort(), streamTimeout);
+
+        const response = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          const errorBody = await response.json().catch(() => ({})) as Record<string, unknown>;
+          const error = createErrorFromResponse(response.status, errorBody);
+
+          if ((response.status === 429 || response.status >= 500) && attempt < this.maxRetries) {
+            lastError = error;
+            await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt] ?? 4_000));
+            continue;
+          }
+
+          throw error;
+        }
+
+        return response;
+      } catch (err) {
+        if (err instanceof Error && 'status' in err) throw err; // Already an AgentsyError
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < this.maxRetries) {
+          await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt] ?? 4_000));
+        }
+      }
     }
 
-    return response;
+    throw lastError ?? new Error('Streaming request failed');
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -82,6 +114,7 @@ export class AgentsyHttpClient {
     const headers: Record<string, string> = {
       'Authorization': `Bearer ${this.apiKey}`,
       'Content-Type': 'application/json',
+      'Accept': 'application/json',
       ...this.defaultHeaders,
     };
 
