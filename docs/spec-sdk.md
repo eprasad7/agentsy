@@ -246,6 +246,8 @@ export type {
   ToolContext,
   RunInput,
   RunOutput,
+  CodeExecutionConfig,
+  EvolutionDefinition,
 } from "./types";
 ```
 
@@ -311,6 +313,13 @@ export const agentsy = {
    * Used for multi-agent projects.
    */
   defineProject(config: ProjectConfig): Readonly<ProjectConfig>;
+
+  /**
+   * Define an evolution configuration for autonomous agent self-improvement.
+   * Used in evolve.config.ts. Returns a validated, frozen EvolutionConfig object.
+   * See: spec-agent-evolution.md for full details.
+   */
+  defineEvolution(config: EvolutionDefinition): Readonly<EvolutionDefinition>;
 };
 ```
 
@@ -401,6 +410,56 @@ export interface AgentConfig {
    * Maps to: agent_versions.model_params (ModelParams JSONB)
    */
   modelParams?: ModelParams;
+
+  /**
+   * Code execution configuration — enables the built-in execute_code tool
+   * backed by E2B sandboxed microVMs. When enabled, the agent can write and
+   * run Python/JS code for data analysis, file processing, and computation.
+   * Disabled by default (opt-in).
+   */
+  codeExecution?: CodeExecutionConfig;
+}
+
+/**
+ * Code execution configuration for an agent.
+ * See: spec-code-execution.md for full details.
+ */
+export interface CodeExecutionConfig {
+  /** Whether code execution is enabled for this agent. Default: false. */
+  enabled: boolean;
+  /** Default language when the LLM doesn't specify. Default: "python". */
+  defaultLanguage?: "python" | "javascript" | "typescript";
+  /** E2B sandbox template. Pre-configured environments with packages. */
+  template?: "python-base" | "data-science" | "node-base" | "full-stack" | string;
+  /** Resource limits for sandbox execution. */
+  limits?: {
+    /** Max execution time per code run in ms. Default: 60_000. Max: 300_000. */
+    timeoutMs?: number;
+    /** RAM limit in MB. Default: 512. Max: 4096. */
+    memoryMb?: number;
+    /** Max code executions per agent run. Default: 10. */
+    maxExecutionsPerRun?: number;
+  };
+  /** Network access configuration. */
+  network?: {
+    /** Allow outbound network from sandbox. Default: false. */
+    enabled?: boolean;
+    /** Allowlisted domains (only when enabled=true). */
+    allowedDomains?: string[];
+  };
+  /** Persist sandbox filesystem between execute_code calls in same run. Default: true. */
+  persistFilesystem?: boolean;
+  /** Additional packages to pre-install (in addition to template). */
+  packages?: {
+    python?: string[];
+    javascript?: string[];
+  };
+  /** Override approval behavior for code execution. */
+  approvalPolicy?: {
+    autoApprove?: boolean;
+    requireApproval?: boolean;
+    requireApprovalIn?: Array<"development" | "staging" | "production">;
+  };
 }
 
 /**
@@ -613,6 +672,46 @@ export interface McpToolDefinition {
    * Maps to: agent_versions.tools_config[].riskLevel
    */
   riskLevel?: "read" | "write" | "admin";
+}
+
+/**
+ * Evolution configuration — defines how the autonomous mutation loop
+ * optimizes an agent's configuration. Used in evolve.config.ts.
+ * See: spec-agent-evolution.md for full details.
+ */
+export interface EvolutionDefinition {
+  /** Target metric — which eval dataset + graders to optimize. */
+  metric: {
+    dataset: string;
+    graders: string[];
+    weights: Record<string, number>;
+  };
+  /** Agent config fields the optimizer can change. */
+  mutable: string[];
+  /** Agent config fields that must stay fixed. */
+  frozen: string[];
+  /** Natural language directives for the meta-agent. */
+  directives?: string;
+  /** Budget limits for a single evolution session. */
+  budget?: {
+    maxMutations?: number;
+    maxCostUsd?: number;
+    maxDurationMinutes?: number;
+    maxCostPerMutation?: number;
+  };
+  /** Cron schedule for automatic evolution sessions (e.g., "0 2 * * *"). */
+  schedule?: string;
+  /** Safety constraints. */
+  safety?: {
+    /** Max allowed regression on any single grader. Default: 0.05. */
+    maxRegressionPerGrader?: number;
+    /** Graders that can never regress (zero tolerance). */
+    zeroToleranceGraders?: string[];
+  };
+  /** Auto-promote level after evolution. Default: "none". */
+  autoPromote?: "none" | "staging" | "production";
+  /** Prefer simpler configs when scores are equal. Default: true. */
+  simplicityPressure?: boolean;
 }
 
 /**

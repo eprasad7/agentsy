@@ -4813,3 +4813,326 @@ POST /v1/notifications/:notification_id/read
 ```
 POST /v1/notifications/read-all
 ```
+
+---
+
+## 21. Run Artifacts
+
+Output files from code execution, file uploads, and tool outputs.
+
+### 21.1 List Run Artifacts
+
+```
+GET /v1/runs/:run_id/artifacts
+```
+
+**Response: `200 OK`** — `Array<RunArtifact>`
+
+```typescript
+interface RunArtifact {
+  id: string;              // art_...
+  run_id: string;
+  step_id?: string;
+  file_name: string;
+  file_path: string;       // /output/chart.png
+  mime_type?: string;
+  size_bytes: number;
+  source: string;          // "code_execution" | "file_upload" | "tool_output"
+  created_at: string;
+}
+```
+
+### 21.2 Download Run Artifact
+
+```
+GET /v1/runs/:run_id/artifacts/:artifact_id
+```
+
+**Response: `200 OK`** — Binary file with `Content-Type` and `Content-Disposition` headers.
+
+### 21.3 Upload Input File for Run
+
+```
+POST /v1/runs/:run_id/files
+Content-Type: multipart/form-data
+```
+
+**Request body**: Multipart form with `file` field.
+
+**Limits**: Max 50MB per file, max 10 files per run.
+
+**Response: `201 Created`**
+
+```typescript
+interface RunFileUpload {
+  artifact_id: string;     // art_...
+  file_name: string;
+  size_bytes: number;
+  mime_type: string;
+  path: string;            // /input/uploads/sales.csv
+}
+```
+
+---
+
+## 22. Agent Repositories
+
+Git repository management for agents.
+
+### 22.1 Get Agent Repository
+
+```
+GET /v1/agents/:agent_id/repo
+```
+
+**Response: `200 OK`**
+
+```typescript
+interface AgentRepo {
+  id: string;              // rep_...
+  agent_id: string;
+  storage_path: string;
+  default_branch: string;
+  head_sha?: string;
+  size_bytes: number;
+  pipeline_config?: PipelineConfig;
+  evolve_config?: EvolutionConfig;
+  created_at: string;
+  updated_at: string;
+}
+```
+
+### 22.2 List Agent Commits
+
+```
+GET /v1/agents/:agent_id/repo/commits?limit=20&offset=0
+```
+
+**Response: `200 OK`** — `PaginatedResponse<Commit>`
+
+```typescript
+interface Commit {
+  sha: string;
+  message: string;
+  author: string;
+  author_email: string;
+  timestamp: string;
+  version_id?: string;     // ver_... if this commit created a version
+}
+```
+
+### 22.3 Get Commit Diff
+
+```
+GET /v1/agents/:agent_id/repo/diff?from=:sha1&to=:sha2
+```
+
+**Response: `200 OK`**
+
+```typescript
+interface RepoDiff {
+  from_sha: string;
+  to_sha: string;
+  files: Array<{
+    path: string;
+    status: "added" | "modified" | "deleted";
+    diff: string;         // unified diff format
+  }>;
+}
+```
+
+---
+
+## 23. CI/CD Pipelines
+
+Pipeline runs triggered by pushes, PRs, and evolution sessions.
+
+### 23.1 List Pipeline Runs
+
+```
+GET /v1/agents/:agent_id/pipelines?limit=20&offset=0
+```
+
+**Response: `200 OK`** — `PaginatedResponse<PipelineRun>`
+
+```typescript
+interface PipelineRun {
+  id: string;
+  agent_id: string;
+  trigger: "push" | "pr" | "evolve" | "manual";
+  commit_sha: string;
+  branch?: string;
+  status: "queued" | "running" | "passed" | "failed" | "cancelled";
+  stages: Array<{
+    name: string;          // "validate" | "eval" | "gate" | "deploy" | "notify"
+    status: "pending" | "running" | "passed" | "failed" | "skipped";
+    duration_ms?: number;
+    details?: Record<string, unknown>;
+  }>;
+  eval_results?: {
+    total_cases: number;
+    passed_cases: number;
+    composite_score: number;
+    regressions: number;
+  };
+  deploy_env?: string;
+  duration_ms?: number;
+  created_at: string;
+}
+```
+
+### 23.2 Get Pipeline Run
+
+```
+GET /v1/agents/:agent_id/pipelines/:run_id
+```
+
+**Response: `200 OK`** — `PipelineRun` (same schema as above, with full stage details).
+
+### 23.3 Retry Failed Pipeline
+
+```
+POST /v1/agents/:agent_id/pipelines/:run_id/retry
+```
+
+**Response: `202 Accepted`** — Returns new `PipelineRun`.
+
+---
+
+## 24. Agent Evolution
+
+Autonomous agent self-improvement via mutation and evaluation.
+
+### 24.1 Start Evolution Session
+
+```
+POST /v1/agents/:agent_id/evolve
+```
+
+**Request body**:
+
+```typescript
+interface StartEvolutionRequest {
+  /** Override budget for this session. */
+  budget?: {
+    max_mutations?: number;
+    max_cost_usd?: number;
+    max_duration_minutes?: number;
+  };
+  /** Override directives for this session. */
+  directives?: string;
+}
+```
+
+**Response: `202 Accepted`**
+
+```typescript
+interface EvolutionSession {
+  id: string;              // evo_...
+  agent_id: string;
+  status: string;
+  baseline_version_id: string;
+  config: EvolutionConfig;
+  total_mutations: number;
+  kept_mutations: number;
+  discarded_mutations: number;
+  baseline_composite_score?: number;
+  final_composite_score?: number;
+  total_cost_usd: number;
+  triggered_by: string;
+  started_at?: string;
+  completed_at?: string;
+  created_at: string;
+}
+```
+
+### 24.2 List Evolution Sessions
+
+```
+GET /v1/agents/:agent_id/evolve?limit=20&offset=0
+```
+
+**Response: `200 OK`** — `PaginatedResponse<EvolutionSession>`
+
+### 24.3 Get Evolution Session
+
+```
+GET /v1/agents/:agent_id/evolve/:session_id
+```
+
+**Response: `200 OK`** — `EvolutionSession` with full details.
+
+### 24.4 Cancel Evolution Session
+
+```
+POST /v1/agents/:agent_id/evolve/:session_id/cancel
+```
+
+**Response: `200 OK`** — Session is stopped gracefully. Kept mutations are committed.
+
+### 24.5 List Mutations in Session
+
+```
+GET /v1/agents/:agent_id/evolve/:session_id/mutations
+```
+
+**Response: `200 OK`** — `Array<EvolutionMutation>`
+
+```typescript
+interface EvolutionMutation {
+  id: string;              // mut_...
+  sequence_number: number;
+  mutation_type: string;
+  status: string;          // "kept" | "discarded" | "error"
+  description: string;
+  hypothesis?: string;
+  config_diff: Array<{ field: string; before: unknown; after: unknown }>;
+  composite_score?: number;
+  per_grader_scores?: Record<string, number>;
+  decision_reason?: string;
+  experiment_id?: string;
+  commit_sha?: string;
+  cost_usd: number;
+  duration_ms?: number;
+  created_at: string;
+}
+```
+
+### 24.6 Stream Evolution Session Events
+
+```
+GET /v1/agents/:agent_id/evolve/:session_id/stream
+```
+
+**Response: `200 OK`** — `text/event-stream`
+
+SSE event types:
+
+```typescript
+{ event: "mutation.started", data: { mutation_id, sequence_number, mutation_type, description } }
+{ event: "mutation.evaluating", data: { mutation_id, experiment_id } }
+{ event: "mutation.completed", data: { mutation_id, status, composite_score, decision_reason } }
+{ event: "session.completed", data: { kept, discarded, score_delta, result_version_id } }
+{ event: "session.failed", data: { error } }
+{ event: "session.budget_exhausted", data: { reason, kept, discarded } }
+```
+
+### 24.7 Promote Evolved Version
+
+```
+POST /v1/agents/:agent_id/evolve/:session_id/promote
+```
+
+**Request body**:
+
+```typescript
+interface PromoteRequest {
+  environment: "staging" | "production";
+}
+```
+
+**Response: `200 OK`** — Returns deployment record.
+
+**Errors**:
+- `403 Forbidden` — Production promotion requires org admin role.
+- `409 Conflict` — Session has no result version (no mutations were kept).

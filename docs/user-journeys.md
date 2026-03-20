@@ -1396,6 +1396,533 @@ agentsy connectors disconnect gmail
 
 ---
 
+## Journey 18: Agent Git Repo & CI/CD Pipeline
+
+### Goal
+Developer works on an agent using Git workflows — push triggers evals, PRs get eval comparison comments, merge auto-deploys to staging.
+
+### Steps
+
+**18.1 — Initialize agent with Git repo**
+```bash
+agentsy init support-agent
+cd support-agent
+
+# Project created with Git repo
+ls -la
+# .git/              ← local git repo
+# agentsy.config.ts  ← agent definition
+# tools/             ← tool implementations
+# evals/             ← eval datasets + graders
+# .env.example
+# package.json
+
+git log --oneline
+# a1b2c3d Initial agent setup
+```
+
+**18.2 — Push to Agentsy remote**
+```bash
+# First push — sets up remote
+agentsy push
+
+# Validating agentsy.config.ts... ✓
+# Pushing to agentsy://acme/support-agent...
+# ✓ Pushed to main (a1b2c3d)
+# ✓ Agent version created: ver_001
+# ✓ CI pipeline triggered: pipeline_47
+#
+# Pipeline: https://app.agentsy.com/agents/support-agent/ci-cd/47
+```
+
+**18.3 — CI pipeline runs automatically**
+```
+Pipeline #47 — push to main (a1b2c3d)
+
+  ✓ Validate config         0.2s
+  ✓ Create version (ver_001) 0.1s
+  ✓ Run evals (golden)       12.3s  — 10/10 passed, avg 0.91
+  ✓ Compare baseline         0.1s   — no regression
+  ✓ Gate: PASS               —      — composite 0.91 ≥ 0.85
+  ✓ Deploy to staging        1.2s   — dep_abc123
+  ✓ Notify #agent-deploys    0.1s
+
+Total: 14.1s
+```
+
+**18.4 — Open a PR with a config change**
+```bash
+git checkout -b improve-refund-handling
+# Edit agentsy.config.ts — update system prompt
+git add agentsy.config.ts
+git commit -m "Improve refund amount calculation instructions"
+agentsy push --branch improve-refund-handling
+```
+
+Pipeline runs evals and posts a comparison comment on the PR:
+
+```markdown
+## Eval Results — support-agent
+
+| Grader            | Baseline | This PR | Delta  |
+|-------------------|----------|---------|--------|
+| answer_correctness| 0.87     | 0.91    | +0.04  |
+| tool_precision    | 0.92     | 0.90    | -0.02  |
+| latency_p50       | 2.1s     | 1.8s    | -0.3s  |
+| cost_per_run      | $0.03    | $0.02   | -$0.01 |
+| **composite**     | **0.86** | **0.88**| **+0.02** |
+
+**Status**: PASS — no regressions, composite above 0.85
+```
+
+**18.5 — Merge and auto-deploy**
+```bash
+# Merge PR on Agentsy (or via dashboard)
+agentsy push  # from main after merge
+
+# ✓ Pipeline #48 — PASS
+# ✓ Auto-deployed to staging
+# Production deploy is manual:
+agentsy deploy --env production
+```
+
+**18.6 — View pipeline history in dashboard**
+```
+Dashboard: Agents → support-agent → CI/CD
+
+┌──────────────────────────────────────────────────────────┐
+│  CI/CD Pipelines                    support-agent         │
+├──────────────────────────────────────────────────────────┤
+│                                                           │
+│  Pipeline Runs                                            │
+│  ┌──────┬──────────┬──────────┬───────┬────────┬───────┐ │
+│  │ #    │ Trigger  │ Commit   │ Eval  │ Deploy │Status │ │
+│  ├──────┼──────────┼──────────┼───────┼────────┼───────┤ │
+│  │ 48   │ push     │ e4f5g6h  │ PASS  │ staging│   ✓   │ │
+│  │ 47   │ push     │ a1b2c3d  │ PASS  │ staging│   ✓   │ │
+│  └──────┴──────────┴──────────┴───────┴────────┴───────┘ │
+│                                                           │
+│  Environments                                             │
+│  ┌─────────────┬──────────┬──────────┬─────────────────┐ │
+│  │ Environment │ Version  │ Deployed │ Status          │ │
+│  ├─────────────┼──────────┼──────────┼─────────────────┤ │
+│  │ production  │ ver_001  │ 2h ago   │ ● healthy       │ │
+│  │ staging     │ ver_002  │ 5m ago   │ ● healthy       │ │
+│  └─────────────┴──────────┴──────────┴─────────────────┘ │
+│                                                           │
+│  [Promote ver_002 staging → production]                   │
+│                                                           │
+└──────────────────────────────────────────────────────────┘
+```
+
+**18.7 — View repo in dashboard**
+```
+Dashboard: Agents → support-agent → Repository
+
+┌──────────────────────────────────────────────────────────┐
+│  Repository                         support-agent         │
+├──────────────────────────────────────────────────────────┤
+│                                                           │
+│  Clone: agentsy://acme/support-agent                      │
+│  Branch: main (e4f5g6h)                                   │
+│                                                           │
+│  Recent Commits                                           │
+│  ┌──────────┬─────────────────────────────┬─────────────┐ │
+│  │ SHA      │ Message                     │ Author      │ │
+│  ├──────────┼─────────────────────────────┼─────────────┤ │
+│  │ e4f5g6h  │ Improve refund calculation  │ ishwar      │ │
+│  │ a1b2c3d  │ Initial agent setup         │ ishwar      │ │
+│  └──────────┴─────────────────────────────┴─────────────┘ │
+│                                                           │
+│  Files                                                    │
+│  📄 agentsy.config.ts                                     │
+│  📁 tools/                                                │
+│  📁 evals/                                                │
+│  📄 package.json                                          │
+│                                                           │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Journey 19: Agent Auto-Evolution
+
+### Goal
+Developer configures autonomous agent evolution — a meta-agent proposes, tests, and keeps/discards config mutations overnight, improving the agent without manual intervention.
+
+### Steps
+
+**19.1 — Configure evolution**
+```typescript
+// evolve.config.ts
+import { agentsy } from "@agentsy/sdk";
+
+export default agentsy.defineEvolution({
+  metric: {
+    dataset: "golden",
+    graders: ["answer_correctness", "tool_precision", "cost_threshold"],
+    weights: {
+      answer_correctness: 0.5,
+      tool_precision: 0.3,
+      cost_threshold: 0.2,
+    },
+  },
+  mutable: ["systemPrompt", "tools", "guardrails", "modelParams", "model"],
+  frozen: ["name", "slug", "connectors"],
+  directives: `
+    Focus on reducing hallucination in refund amount calculations.
+    Prefer fewer tool calls over more.
+    Don't sacrifice accuracy for speed.
+    Try making the agent work with claude-haiku-4 if quality holds.
+  `,
+  budget: { maxMutations: 50, maxCostUsd: 10.00, maxDurationMinutes: 120 },
+  schedule: "0 2 * * *",  // nightly at 2am UTC
+  safety: { maxRegressionPerGrader: 0.05, zeroToleranceGraders: ["pii_check"] },
+  autoPromote: "staging",
+});
+```
+
+```bash
+agentsy push
+# ✓ Evolution config detected — nightly schedule registered (2am UTC)
+```
+
+**19.2 — Run evolution manually (first time)**
+```bash
+agentsy evolve
+
+# Starting evolution session evo_abc123...
+# Baseline: ver_041 (composite: 0.850)
+#
+# Mutation 1/50: instruction_rewrite
+#   "Shortened refund instructions to reduce confusion"
+#   Hypothesis: concise instructions reduce hallucination
+#   Running evals... 0.870 ✓ KEEP (+0.020)
+#
+# Mutation 2/50: tool_remove
+#   "Removed searchKB tool"
+#   Hypothesis: KB retrieval via memory is sufficient
+#   Running evals... 0.865 ✗ DISCARD (regressed tool_precision by 0.03)
+#
+# Mutation 3/50: model_swap
+#   "Switched to claude-haiku-4"
+#   Hypothesis: haiku sufficient for this task complexity
+#   Running evals... 0.830 ✗ DISCARD (composite below current best)
+#
+# Mutation 4/50: parameter_sweep
+#   "Temperature 0.7 → 0.3"
+#   Hypothesis: lower temp reduces hallucination on factual queries
+#   Running evals... 0.890 ✓ KEEP (+0.020)
+#
+# ... (continues until budget exhausted) ...
+#
+# Session complete: evo_abc123
+#   Mutations: 12 total — 3 kept, 9 discarded
+#   Score: 0.850 → 0.895 (+5.3%)
+#   Cost: $4.23 | Duration: 18m
+#   Result: ver_042 (squash-merged to main)
+#   Auto-promoted to staging
+#
+# View details: https://app.agentsy.com/agents/support-agent/evolution/evo_abc123
+```
+
+**19.3 — Review evolution results in dashboard**
+```
+Dashboard: Agents → support-agent → Evolution
+
+┌──────────────────────────────────────────────────────────┐
+│  Evolution                          support-agent         │
+├──────────────────────────────────────────────────────────┤
+│                                                           │
+│  Score Trend   [0.75 ─── 0.82 ─── 0.85 ─── 0.895]       │
+│                ver_039  ver_040  ver_041  ver_042          │
+│                                                           │
+│  Last Session: 4h ago (manual)  │ Next: tonight 2am       │
+│  Status: 12 mutations — 3 kept, 9 discarded               │
+│  Cost: $4.23 │ Duration: 18m                              │
+│                                                           │
+│  Mutation History (evo_abc123)                             │
+│  ┌──────┬────────┬───────────────────────┬──────┬───────┐ │
+│  │ #    │ Type   │ Description           │Score │Status │ │
+│  ├──────┼────────┼───────────────────────┼──────┼───────┤ │
+│  │ 1    │ base   │ initial config        │0.850 │ —     │ │
+│  │ 2    │ instr  │ shortened refund...   │0.870 │ KEEP  │ │
+│  │ 3    │ tool-  │ removed searchKB      │0.865 │ DROP  │ │
+│  │ 4    │ model  │ switched to haiku     │0.830 │ DROP  │ │
+│  │ 5    │ param  │ temp 0.7→0.3          │0.890 │ KEEP  │ │
+│  │ ...  │        │                       │      │       │ │
+│  └──────┴────────┴───────────────────────┴──────┴───────┘ │
+│                                                           │
+│  [View Config Diff]  [Promote ver_042 to Production]      │
+│  [Run Evolution Now] [Edit Directives]                    │
+│                                                           │
+└──────────────────────────────────────────────────────────┘
+```
+
+**19.4 — Review the config diff before promoting**
+```
+Click "View Config Diff"
+
+--- agentsy.config.ts (ver_041, baseline)
++++ agentsy.config.ts (ver_042, evolved)
+
+  systemPrompt:
+-   "You are a helpful customer support agent for Acme Corp.
+-    Help users with orders and refunds."
++   "You are Acme Corp's support agent. For refund requests:
++    verify order ID, check 30-day window, calculate prorated
++    amount. Never guess amounts — always look them up."
+
+  modelParams:
+-   temperature: 0.7
++   temperature: 0.3
+```
+
+**19.5 — Promote evolved version to production**
+```bash
+agentsy evolve promote ver_042 --env production
+
+# Promoting ver_042 to production...
+# ✓ Deployed to production
+# ⚠ Previous version ver_041 superseded
+```
+
+Or from dashboard: click **"Promote ver_042 to Production"**
+
+**19.6 — View evolution history**
+```bash
+agentsy evolve history
+
+# Evolution Sessions — support-agent
+# ┌──────────────┬────────┬──────┬──────────┬──────────┬────────┐
+# │ Session      │ Status │ Kept │ Discarded│ Score Δ  │ When   │
+# ├──────────────┼────────┼──────┼──────────┼──────────┼────────┤
+# │ evo_abc123   │ done   │ 3    │ 9        │ +0.045   │ 4h ago │
+# │ evo_xyz789   │ done   │ 1    │ 4        │ +0.012   │ 2d ago │
+# │ evo_def456   │ done   │ 0    │ 5        │ +0.000   │ 3d ago │
+# └──────────────┴────────┴──────┴──────────┴──────────┴────────┘
+
+agentsy evolve compare ver_041 ver_042
+
+# Version Comparison: ver_041 → ver_042
+# ┌─────────────────────┬─────────┬─────────┬────────┐
+# │ Grader              │ ver_041 │ ver_042 │ Delta  │
+# ├─────────────────────┼─────────┼─────────┼────────┤
+# │ answer_correctness  │ 0.87    │ 0.92    │ +0.05  │
+# │ tool_precision      │ 0.92    │ 0.93    │ +0.01  │
+# │ cost_threshold      │ 0.75    │ 0.80    │ +0.05  │
+# │ composite           │ 0.850   │ 0.895   │ +0.045 │
+# └─────────────────────┴─────────┴─────────┴────────┘
+```
+
+**19.7 — Rollback if needed**
+```bash
+agentsy rollback ver_041
+# ✓ Created ver_043 with config from ver_041
+# ✓ Deployed to production
+```
+
+---
+
+## Journey 20: Code Execution in Agent Runs
+
+### Goal
+Developer enables code execution so their agent can write and run Python/JS code to analyze data, generate charts, process files, or perform computations that are best expressed as code.
+
+### Steps
+
+**20.1 — Enable code execution on an agent**
+```typescript
+// agentsy.config.ts
+import { agentsy } from "@agentsy/sdk";
+import { searchWeb, readDocument } from "./tools";
+
+export default agentsy.defineAgent({
+  slug: "research-agent",
+  name: "Research Agent",
+  model: "claude-sonnet-4",
+  systemPrompt: "You are a research agent. When you need to analyze data, write Python code.",
+  tools: [searchWeb, readDocument],
+  codeExecution: {
+    enabled: true,
+    defaultLanguage: "python",
+    template: "data-science",  // pre-installed: pandas, numpy, matplotlib, etc.
+    limits: {
+      timeoutMs: 120_000,      // 2 minutes per execution
+      memoryMb: 1024,          // 1GB RAM
+      maxExecutionsPerRun: 10,
+    },
+    network: { enabled: false },
+    persistFilesystem: true,   // keep files between code executions within same run
+  },
+});
+```
+
+```bash
+agentsy dev
+# ✓ Agent loaded: research-agent
+# ✓ Code execution: enabled (data-science template)
+# ✓ Local server: http://localhost:4321
+```
+
+**20.2 — Agent writes and executes code during a run**
+
+User sends: *"Analyze the attached sales data and create a revenue chart by month"*
+(with `sales.csv` attached)
+
+Agent trace:
+```
+Step 1: LLM Call (Claude Sonnet)
+  → "I'll analyze the sales data with Python."
+
+Step 2: Tool Call: execute_code
+  Language: python
+  Code:
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    df = pd.read_csv('/input/uploads/sales.csv')
+    monthly = df.groupby('month')['revenue'].sum().sort_index()
+
+    # Print summary for my response
+    print(f"Total revenue: ${monthly.sum():,.2f}")
+    print(f"Best month: {monthly.idxmax()} (${monthly.max():,.2f})")
+    print(f"Worst month: {monthly.idxmin()} (${monthly.min():,.2f})")
+
+    # Generate chart
+    plt.figure(figsize=(10, 6))
+    monthly.plot(kind='bar', color='#4F46E5')
+    plt.title('Monthly Revenue')
+    plt.ylabel('Revenue ($)')
+    plt.tight_layout()
+    plt.savefig('/output/revenue-chart.png', dpi=150)
+
+  Result:
+    stdout: "Total revenue: $156,000.00\nBest month: March ($23,400)..."
+    exit_code: 0
+    output_files: { "revenue-chart.png": <45KB> }
+    execution_time: 1.8s
+
+Step 3: LLM Call (final response)
+  → "Here's the analysis of your sales data:
+     - Total revenue: $156,000.00
+     - Best month: March ($23,400)
+     - Worst month: January ($8,200)
+
+     I've created a revenue chart — see the attached file."
+```
+
+**20.3 — Multi-turn code execution (iterative)**
+
+Agent hits an error and self-corrects:
+```
+Step 2: Tool Call: execute_code
+  Code: df = pd.read_csv('/input/uploads/sales.csv')
+        print(df.groupby('month')['revenue'].mean())
+
+  Result:
+    stderr: "KeyError: 'revenue'"
+    exit_code: 1
+
+Step 3: Tool Call: execute_code
+  Code: df = pd.read_csv('/input/uploads/sales.csv')
+        print(df.columns.tolist())  # Let me check the actual column names
+
+  Result:
+    stdout: "['Month', 'Rev', 'Units', 'Region']"
+    exit_code: 0
+
+Step 4: Tool Call: execute_code
+  Code: df = pd.read_csv('/input/uploads/sales.csv')
+        print(df.groupby('Month')['Rev'].mean())  # Fixed column name
+
+  Result:
+    stdout: "Month\nJan    8200.0\nFeb    12400.0\n..."
+    exit_code: 0
+```
+
+The sandbox filesystem persists between calls — `sales.csv` doesn't need to be re-uploaded.
+
+**20.4 — View code execution in trace viewer**
+```
+Dashboard: Runs → run_abc123 → Trace
+
+┌──────────────────────────────────────────────────────────┐
+│ Step 2: execute_code (Python)                     1.8s   │
+├──────────────────────────────────────────────────────────┤
+│                                                          │
+│  Code                                    [Copy] [▼]      │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ import pandas as pd                                │  │
+│  │ import matplotlib.pyplot as plt                    │  │
+│  │                                                    │  │
+│  │ df = pd.read_csv('/input/uploads/sales.csv')       │  │
+│  │ monthly = df.groupby('month')['revenue'].sum()     │  │
+│  │ ...                                                │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+│  Output                                  exit_code: 0    │
+│  ┌────────────────────────────────────────────────────┐  │
+│  │ Total revenue: $156,000.00                         │  │
+│  │ Best month: March ($23,400.00)                     │  │
+│  │ Worst month: January ($8,200.00)                   │  │
+│  └────────────────────────────────────────────────────┘  │
+│                                                          │
+│  Files                                                   │
+│  📊 revenue-chart.png (45KB) [Preview] [Download]        │
+│                                                          │
+│  Sandbox: data-science │ 1024MB │ 1.8s │ $0.002         │
+│                                                          │
+└──────────────────────────────────────────────────────────┘
+```
+
+**20.5 — Download output files**
+```bash
+# Via API
+curl -H "Authorization: Bearer sk-agentsy-..." \
+  https://api.agentsy.com/v1/runs/run_abc123/artifacts
+
+# [
+#   { "id": "art_xyz", "file_name": "revenue-chart.png", "mime_type": "image/png", "size_bytes": 46080 },
+#   { "id": "art_abc", "file_name": "summary.csv", "mime_type": "text/csv", "size_bytes": 2048 }
+# ]
+
+# Download
+curl -H "Authorization: Bearer sk-agentsy-..." \
+  https://api.agentsy.com/v1/runs/run_abc123/artifacts/art_xyz \
+  -o revenue-chart.png
+```
+
+Or from dashboard: click **[Download]** on the file in the trace viewer.
+
+**20.6 — Code execution in streaming**
+
+When streaming a run, code execution events appear in real-time:
+
+```typescript
+const stream = await client.agents.run("research-agent", {
+  input: "Analyze this data...",
+  stream: true,
+});
+
+for await (const event of stream) {
+  switch (event.type) {
+    case "code_execution.started":
+      console.log(`Executing ${event.data.language}...`);
+      break;
+    case "code_execution.completed":
+      console.log(`Done (${event.data.execution_time_ms}ms)`);
+      console.log(event.data.output_preview);
+      break;
+    case "code_execution.file_created":
+      console.log(`File: ${event.data.file_name} (${event.data.size_bytes}B)`);
+      break;
+  }
+}
+```
+
+---
+
 ## Journey Summary
 
 | Journey | Primary Surface | Key Screens / Commands |
@@ -1417,3 +1944,6 @@ agentsy connectors disconnect gmail
 | 15. CI/CD Integration | CLI + GitHub Actions | `agentsy eval run --ci` |
 | 16. Alerting & Notifications | Dashboard | Settings → Alerts, notification bell |
 | 17. Connector Catalog | Dashboard + CLI | Connectors → Browse, `agentsy connectors` |
+| 18. Git Repo & CI/CD | CLI + Dashboard | `agentsy push`, Agents → CI/CD, PR eval comments |
+| 19. Auto-Evolution | CLI + Dashboard | `agentsy evolve`, Agents → Evolution, evolve.config.ts |
+| 20. Code Execution | CLI + Dashboard | `codeExecution` config, trace viewer, artifacts API |

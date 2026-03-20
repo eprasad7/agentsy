@@ -61,6 +61,10 @@ All primary keys use **prefixed nanoid** strings. This provides:
 | connector_connections | `conn_` | `conn_qJ8tY5cF2hNx` |
 | alert_rules | `alr_` | `alr_hT7cF3nM8jLz` |
 | notifications | `ntf_` | `ntf_xW6bN4kP7vRm` |
+| run_artifacts | `art_` | `art_kP9xW2nM5vBz` |
+| agent_repos | `rep_` | `rep_rL7wK4xP2dGs` |
+| evolution_sessions | `evo_` | `evo_kP9xW2nM5vBz` |
+| evolution_mutations | `mut_` | `mut_qJ3tY8cF6hNm` |
 
 ### Nanoid Generator
 
@@ -74,7 +78,8 @@ const generate = customAlphabet(alphabet, 21);
 export type IdPrefix =
   | "org" | "mem" | "key" | "ag" | "ver" | "env" | "dep"
   | "run" | "stp" | "ses" | "msg" | "eds" | "edc" | "exp"
-  | "exr" | "ebl" | "kb" | "kc" | "sec" | "usg";
+  | "exr" | "ebl" | "kb" | "kc" | "sec" | "usg"
+  | "art" | "rep" | "evo" | "mut";
 
 export function newId(prefix: IdPrefix): string {
   return `${prefix}_${generate()}`;
@@ -1625,6 +1630,235 @@ export const notifications = pgTable(
 
 ---
 
+### 3.26 run_artifacts
+
+Output files from code execution, file uploads, and tool outputs attached to a run.
+
+```typescript
+export const runArtifacts = pgTable(
+  "run_artifacts",
+  {
+    id: varchar("id", { length: 30 }).primaryKey(), // art_...
+    runId: varchar("run_id", { length: 30 })
+      .notNull()
+      .references(() => runs.id, { onDelete: "cascade" }),
+    stepId: varchar("step_id", { length: 30 })
+      .references(() => runSteps.id, { onDelete: "set null" }),
+    orgId: varchar("org_id", { length: 30 })
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    fileName: varchar("file_name", { length: 255 }).notNull(),
+    filePath: varchar("file_path", { length: 500 }).notNull(), // /output/chart.png
+    mimeType: varchar("mime_type", { length: 100 }),
+    sizeBytes: integer("size_bytes").notNull(),
+    storagePath: varchar("storage_path", { length: 500 }).notNull(), // S3/R2 object path
+    source: varchar("source", { length: 50 }).notNull(), // "code_execution" | "file_upload" | "tool_output"
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("run_artifacts_run_id_idx").on(table.runId),
+    index("run_artifacts_org_id_idx").on(table.orgId),
+  ]
+);
+```
+
+**RLS**: `org_id = current_setting('app.org_id')`.
+
+---
+
+### 3.27 agent_repos
+
+Git repository backing each agent. One repo per agent.
+
+```typescript
+export const agentRepos = pgTable(
+  "agent_repos",
+  {
+    id: varchar("id", { length: 30 }).primaryKey(), // rep_...
+    agentId: varchar("agent_id", { length: 30 })
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    orgId: varchar("org_id", { length: 30 })
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    storagePath: varchar("storage_path", { length: 500 }).notNull(),
+    defaultBranch: varchar("default_branch", { length: 100 }).notNull().default("main"),
+    headSha: varchar("head_sha", { length: 40 }),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull().default(0),
+    pipelineConfig: jsonb("pipeline_config").$type<PipelineConfig>(),
+    evolveConfig: jsonb("evolve_config").$type<EvolutionConfig>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("agent_repos_agent_id_idx").on(table.agentId),
+    index("agent_repos_org_id_idx").on(table.orgId),
+  ]
+);
+
+type PipelineConfig = {
+  evalOnPush?: boolean;
+  evalDatasets?: string[];
+  regressionGate?: boolean;
+  minScore?: number;
+  autoDeploy?: Record<string, { onPush: string | false; requireEval?: boolean }>;
+  notify?: { onFailure?: string[]; onDeploy?: string[] };
+};
+
+type EvolutionConfig = {
+  metric?: { dataset: string; graders: string[]; weights: Record<string, number> };
+  mutable?: string[];
+  frozen?: string[];
+  directives?: string;
+  budget?: { maxMutations?: number; maxCostUsd?: number; maxDurationMinutes?: number };
+  schedule?: string;
+  safety?: { maxRegressionPerGrader?: number; zeroToleranceGraders?: string[] };
+  autoPromote?: "none" | "staging" | "production";
+  simplicityPressure?: boolean;
+};
+```
+
+**RLS**: `org_id = current_setting('app.org_id')`.
+
+---
+
+### 3.28 evolution_sessions
+
+A single evolution run — one invocation of the autonomous mutation loop.
+
+```typescript
+export const evolutionSessionStatusEnum = pgEnum("evolution_session_status", [
+  "queued", "running", "completed", "failed", "cancelled", "budget_exhausted",
+]);
+
+export const autoPromoteLevelEnum = pgEnum("auto_promote_level", [
+  "none", "staging", "production",
+]);
+
+export const evolutionSessions = pgTable(
+  "evolution_sessions",
+  {
+    id: varchar("id", { length: 30 }).primaryKey(), // evo_...
+    orgId: varchar("org_id", { length: 30 })
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    agentId: varchar("agent_id", { length: 30 })
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    repoId: varchar("repo_id", { length: 30 })
+      .notNull()
+      .references(() => agentRepos.id, { onDelete: "cascade" }),
+    baselineVersionId: varchar("baseline_version_id", { length: 30 })
+      .notNull()
+      .references(() => agentVersions.id, { onDelete: "restrict" }),
+    resultVersionId: varchar("result_version_id", { length: 30 })
+      .references(() => agentVersions.id, { onDelete: "set null" }),
+    status: evolutionSessionStatusEnum("status").notNull().default("queued"),
+    config: jsonb("config").$type<EvolutionConfig>().notNull(),
+    totalMutations: integer("total_mutations").notNull().default(0),
+    keptMutations: integer("kept_mutations").notNull().default(0),
+    discardedMutations: integer("discarded_mutations").notNull().default(0),
+    errorMutations: integer("error_mutations").notNull().default(0),
+    baselineCompositeScore: doublePrecision("baseline_composite_score"),
+    finalCompositeScore: doublePrecision("final_composite_score"),
+    totalCostUsd: doublePrecision("total_cost_usd").notNull().default(0),
+    totalDurationMs: integer("total_duration_ms"),
+    branchName: varchar("branch_name", { length: 255 }),
+    startCommitSha: varchar("start_commit_sha", { length: 40 }),
+    endCommitSha: varchar("end_commit_sha", { length: 40 }),
+    triggeredBy: varchar("triggered_by", { length: 50 }).notNull(), // "schedule" | "manual" | "api"
+    triggeredByUserId: varchar("triggered_by_user_id", { length: 255 }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("evolution_sessions_org_id_idx").on(table.orgId),
+    index("evolution_sessions_agent_id_idx").on(table.agentId),
+    index("evolution_sessions_status_idx").on(table.status),
+    index("evolution_sessions_created_at_idx").on(table.createdAt),
+  ]
+);
+```
+
+**RLS**: `org_id = current_setting('app.org_id')`.
+
+---
+
+### 3.29 evolution_mutations
+
+Individual mutation attempts within an evolution session.
+
+```typescript
+export const mutationStatusEnum = pgEnum("mutation_status", [
+  "pending", "evaluating", "kept", "discarded", "error",
+]);
+
+export const mutationTypeEnum = pgEnum("mutation_type", [
+  "baseline", "instruction_rewrite", "tool_add", "tool_remove", "tool_reorder",
+  "guardrail_tune", "model_swap", "parameter_sweep", "few_shot_add",
+  "few_shot_remove", "memory_config", "composite",
+]);
+
+export const evolutionMutations = pgTable(
+  "evolution_mutations",
+  {
+    id: varchar("id", { length: 30 }).primaryKey(), // mut_...
+    sessionId: varchar("session_id", { length: 30 })
+      .notNull()
+      .references(() => evolutionSessions.id, { onDelete: "cascade" }),
+    orgId: varchar("org_id", { length: 30 })
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    sequenceNumber: integer("sequence_number").notNull(),
+    mutationType: mutationTypeEnum("mutation_type").notNull(),
+    status: mutationStatusEnum("status").notNull().default("pending"),
+    description: text("description").notNull(),
+    hypothesis: text("hypothesis"),
+    configDiff: jsonb("config_diff").$type<Array<{
+      field: string;
+      before: unknown;
+      after: unknown;
+    }>>().notNull(),
+    experimentId: varchar("experiment_id", { length: 30 })
+      .references(() => evalExperiments.id, { onDelete: "set null" }),
+    compositeScore: doublePrecision("composite_score"),
+    perGraderScores: jsonb("per_grader_scores")
+      .$type<Record<string, number>>(),
+    decisionReason: text("decision_reason"),
+    commitSha: varchar("commit_sha", { length: 40 }),
+    costUsd: doublePrecision("cost_usd").notNull().default(0),
+    durationMs: integer("duration_ms"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("evolution_mutations_session_id_idx").on(table.sessionId),
+    index("evolution_mutations_org_id_idx").on(table.orgId),
+    uniqueIndex("evolution_mutations_session_sequence_idx").on(
+      table.sessionId,
+      table.sequenceNumber
+    ),
+  ]
+);
+```
+
+**RLS**: `org_id = current_setting('app.org_id')`.
+
+---
+
 ## 4. ER Diagram
 
 ```mermaid
@@ -1672,6 +1906,14 @@ erDiagram
     eval_dataset_cases ||--o{ eval_experiment_results : "results for"
 
     knowledge_bases ||--o{ knowledge_chunks : "contains"
+
+    runs ||--o{ run_artifacts : "has artifacts"
+
+    agents ||--o| agent_repos : "has repo"
+    agent_repos ||--o{ evolution_sessions : "evolves via"
+
+    evolution_sessions ||--o{ evolution_mutations : "has mutations"
+    evolution_mutations ||--o| eval_experiments : "evaluated by"
 
     organizations {
         varchar id PK "org_..."
@@ -2115,6 +2357,10 @@ CREATE ROLE agentsy_app;
 | knowledge_chunks | `org_id` | No | Cascade from knowledge_bases |
 | secrets | `org_id` | No | |
 | usage_daily | `org_id` | No | |
+| run_artifacts | `org_id` | No | Cascade from runs |
+| agent_repos | `org_id` | No | One per agent |
+| evolution_sessions | `org_id` | No | |
+| evolution_mutations | `org_id` | No | Cascade from sessions |
 
 ---
 
@@ -2194,7 +2440,18 @@ Migration 0010: RLS policies
 Migration 0011: Triggers
   - set_updated_at trigger on all tables with updated_at
 
-Migration 0012: Seed data
+Migration 0012: Run artifacts
+  - run_artifacts
+
+Migration 0013: Agent repos
+  - agent_repos
+
+Migration 0014: Evolution tables
+  - evolution_session_status, mutation_status, mutation_type, auto_promote_level enums
+  - evolution_sessions
+  - evolution_mutations
+
+Migration 0015: Seed data
   - Default environments (dev/staging/production) creation function
 ```
 
