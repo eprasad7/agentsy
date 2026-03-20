@@ -12,6 +12,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
+import { getDb } from '../lib/request-db.js';
 import { notFound, validationError, conflict } from '../plugins/error-handler.js';
 
 // ── Zod Schemas ─────────────────────────────────────────────────────
@@ -80,10 +81,11 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/agents — create agent
   app.post('/v1/agents', async (request, reply) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = createAgentSchema.parse(request.body);
 
     // Check slug uniqueness within org
-    const existing = await db
+    const existing = await d
       .select({ id: agents.id })
       .from(agents)
       .where(and(eq(agents.orgId, orgId), eq(agents.slug, body.slug), isNull(agents.deletedAt)))
@@ -94,7 +96,7 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
     const id = newId('ag');
     const now = new Date();
 
-    await db.insert(agents).values({
+    await d.insert(agents).values({
       id,
       orgId,
       name: body.name,
@@ -106,7 +108,7 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
 
     // Create version 1 with empty defaults
     const versionId = newId('ver');
-    await db.insert(agentVersions).values({
+    await d.insert(agentVersions).values({
       id: versionId,
       agentId: id,
       orgId,
@@ -138,6 +140,7 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/agents — list agents
   app.get('/v1/agents', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const query = request.query as Record<string, string>;
     const { limit, cursor, order } = paginationSchema.parse(query);
 
@@ -157,7 +160,7 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
-    const rows = await db
+    const rows = await d
       .select()
       .from(agents)
       .where(and(...conditions))
@@ -177,7 +180,8 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/agents/:agent_id — get agent
   app.get<{ Params: { agent_id: string } }>('/v1/agents/:agent_id', async (request) => {
     const orgId = request.orgId!;
-    const result = await db
+    const d = getDb(request, db);
+    const result = await d
       .select()
       .from(agents)
       .where(and(eq(agents.id, request.params.agent_id), eq(agents.orgId, orgId), isNull(agents.deletedAt)))
@@ -190,6 +194,7 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
   // PATCH /v1/agents/:agent_id — update agent
   app.patch<{ Params: { agent_id: string } }>('/v1/agents/:agent_id', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = updateAgentSchema.parse(request.body);
 
     const updates: Record<string, unknown> = { updatedAt: new Date() };
@@ -200,7 +205,7 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
       throw validationError('No fields to update');
     }
 
-    const result = await db
+    const result = await d
       .update(agents)
       .set(updates)
       .where(and(eq(agents.id, request.params.agent_id), eq(agents.orgId, orgId), isNull(agents.deletedAt)))
@@ -213,7 +218,8 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
   // DELETE /v1/agents/:agent_id — soft delete
   app.delete<{ Params: { agent_id: string } }>('/v1/agents/:agent_id', async (request, reply) => {
     const orgId = request.orgId!;
-    const result = await db
+    const d = getDb(request, db);
+    const result = await d
       .update(agents)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(agents.id, request.params.agent_id), eq(agents.orgId, orgId), isNull(agents.deletedAt)))
@@ -289,10 +295,11 @@ export function agentVersionRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/agents/:agent_id/versions — list versions
   app.get<{ Params: { agent_id: string } }>('/v1/agents/:agent_id/versions', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const { limit, cursor, order } = paginationSchema.parse(request.query);
 
     // Verify agent exists and belongs to org
-    const agentResult = await db
+    const agentResult = await d
       .select({ id: agents.id })
       .from(agents)
       .where(and(eq(agents.id, request.params.agent_id), eq(agents.orgId, orgId), isNull(agents.deletedAt)))
@@ -314,7 +321,7 @@ export function agentVersionRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
-    const rows = await db
+    const rows = await d
       .select()
       .from(agentVersions)
       .where(and(...conditions))
@@ -334,10 +341,11 @@ export function agentVersionRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/agents/:agent_id/versions — create version
   app.post<{ Params: { agent_id: string } }>('/v1/agents/:agent_id/versions', async (request, reply) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = createVersionSchema.parse(request.body);
 
     // Verify agent exists
-    const agentResult = await db
+    const agentResult = await d
       .select({ id: agents.id })
       .from(agents)
       .where(and(eq(agents.id, request.params.agent_id), eq(agents.orgId, orgId), isNull(agents.deletedAt)))
@@ -346,7 +354,7 @@ export function agentVersionRoutes(app: FastifyInstance, db: DbClient): void {
     if (!agentResult[0]) throw notFound('Agent not found');
 
     // Get next version number
-    const maxVersionResult = await db
+    const maxVersionResult = await d
       .select({ maxVersion: sql<number>`COALESCE(MAX(${agentVersions.version}), 0)` })
       .from(agentVersions)
       .where(eq(agentVersions.agentId, request.params.agent_id));
@@ -369,7 +377,7 @@ export function agentVersionRoutes(app: FastifyInstance, db: DbClient): void {
 
     const id = newId('ver');
 
-    const row = await db
+    const row = await d
       .insert(agentVersions)
       .values({
         id,
@@ -398,8 +406,9 @@ export function agentVersionRoutes(app: FastifyInstance, db: DbClient): void {
     '/v1/agents/:agent_id/versions/:version_id',
     async (request) => {
       const orgId = request.orgId!;
+      const d = getDb(request, db);
 
-      const result = await db
+      const result = await d
         .select()
         .from(agentVersions)
         .where(

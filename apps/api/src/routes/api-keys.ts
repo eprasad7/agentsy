@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
+import { getDb } from '../lib/request-db.js';
 import { notFound } from '../plugins/error-handler.js';
 import { generateApiKey } from '../services/api-keys.js';
 
@@ -17,10 +18,11 @@ export function apiKeyRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/api-keys — create, returns full key ONCE
   app.post('/v1/api-keys', async (request, reply) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = createKeySchema.parse(request.body);
 
     // Get org slug for key prefix
-    const orgResult = await db
+    const orgResult = await d
       .select({ slug: organizations.slug })
       .from(organizations)
       .where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt)))
@@ -30,7 +32,7 @@ export function apiKeyRoutes(app: FastifyInstance, db: DbClient): void {
     const { fullKey, prefix, keyHash } = generateApiKey(slug);
     const id = newId('key');
 
-    await db.insert(apiKeys).values({
+    await d.insert(apiKeys).values({
       id,
       orgId,
       name: body.name,
@@ -53,8 +55,9 @@ export function apiKeyRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/api-keys — list (prefix only, never full key)
   app.get('/v1/api-keys', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
-    const keys = await db
+    const keys = await d
       .select({
         id: apiKeys.id,
         name: apiKeys.name,
@@ -83,8 +86,9 @@ export function apiKeyRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/api-keys/:id
   app.get<{ Params: { id: string } }>('/v1/api-keys/:id', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
-    const result = await db
+    const result = await d
       .select({
         id: apiKeys.id,
         name: apiKeys.name,
@@ -115,8 +119,9 @@ export function apiKeyRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/api-keys/:id/revoke
   app.post<{ Params: { id: string } }>('/v1/api-keys/:id/revoke', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
-    const result = await db
+    const result = await d
       .update(apiKeys)
       .set({ revokedAt: new Date() })
       .where(and(eq(apiKeys.id, request.params.id), eq(apiKeys.orgId, orgId)))

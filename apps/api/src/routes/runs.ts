@@ -274,7 +274,7 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
           workflowId,
           args: [{
             runId,
-            agentId: request.params.agent_id,
+            agentId,
             versionId,
             orgId,
             input: normalizedInput,
@@ -306,7 +306,7 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       reply.status(202);
       return {
         id: runId,
-        agent_id: request.params.agent_id,
+        agent_id: agentId,
         status: 'queued',
         poll_url: `/v1/runs/${runId}`,
         created_at: now.toISOString(),
@@ -474,10 +474,17 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
     }
 
     const cancelledAt = new Date();
-    await db
+    const d = getDb(request, db);
+    await d
       .update(runs)
       .set({ status: 'cancelled', completedAt: cancelledAt, updatedAt: cancelledAt })
       .where(eq(runs.id, request.params.run_id));
+
+    // Release concurrent run slot
+    try {
+      const { releaseRunSlot } = await import('../middleware/concurrent-run-limiter.js');
+      await releaseRunSlot(orgId);
+    } catch { /* non-critical */ }
 
     return {
       id: request.params.run_id,

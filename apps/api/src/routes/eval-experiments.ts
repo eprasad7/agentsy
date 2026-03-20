@@ -13,6 +13,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
+import { getDb } from '../lib/request-db.js';
 import { getTemporalClient } from '../lib/temporal.js';
 import { badRequest, notFound } from '../plugins/error-handler.js';
 
@@ -134,10 +135,11 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/eval/experiments — start experiment
   app.post('/v1/eval/experiments', async (request, reply) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = createExperimentSchema.parse(request.body);
 
     // Verify dataset exists
-    const dataset = await db
+    const dataset = await d
       .select({ id: evalDatasets.id, caseCount: evalDatasets.caseCount })
       .from(evalDatasets)
       .where(and(eq(evalDatasets.id, body.dataset_id), eq(evalDatasets.orgId, orgId)))
@@ -147,7 +149,7 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
     if (dataset[0].caseCount === 0) throw badRequest('Dataset has no cases');
 
     // Verify agent + version exist
-    const agent = await db
+    const agent = await d
       .select({ id: agents.id })
       .from(agents)
       .where(and(eq(agents.id, body.agent_id), eq(agents.orgId, orgId)))
@@ -155,7 +157,7 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
 
     if (!agent[0]) throw notFound('Agent not found');
 
-    const version = await db
+    const version = await d
       .select({ id: agentVersions.id })
       .from(agentVersions)
       .where(
@@ -179,7 +181,7 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
       judgeModel: body.judge_model,
     };
 
-    await db.insert(evalExperiments).values({
+    await d.insert(evalExperiments).values({
       id,
       orgId,
       datasetId: body.dataset_id,
@@ -199,7 +201,7 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
 
     // Resolve environment for eval runs (use development by default)
     const { environments } = await import('@agentsy/db');
-    const envRow = await db
+    const envRow = await d
       .select({ id: environments.id })
       .from(environments)
       .where(and(eq(environments.orgId, orgId), eq(environments.name, 'development')))
@@ -230,7 +232,7 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
       // Temporal not available — experiment stays queued
     }
 
-    const result = await db
+    const result = await d
       .select()
       .from(evalExperiments)
       .where(eq(evalExperiments.id, id))
@@ -243,6 +245,7 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/eval/experiments — list experiments
   app.get('/v1/eval/experiments', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const { limit, cursor, order, agent_id, dataset_id, status } = listExperimentsSchema.parse(
       request.query,
     );
@@ -264,7 +267,7 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
-    const rows = await db
+    const rows = await d
       .select()
       .from(evalExperiments)
       .where(and(...conditions))
@@ -284,8 +287,9 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/eval/experiments/:id — get experiment
   app.get<{ Params: { id: string } }>('/v1/eval/experiments/:id', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
-    const result = await db
+    const result = await d
       .select()
       .from(evalExperiments)
       .where(and(eq(evalExperiments.id, request.params.id), eq(evalExperiments.orgId, orgId)))
@@ -298,10 +302,11 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/eval/experiments/:id/results — per-case results
   app.get<{ Params: { id: string } }>('/v1/eval/experiments/:id/results', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const { limit, cursor, order } = paginationSchema.parse(request.query);
 
     // Verify experiment exists
-    const experiment = await db
+    const experiment = await d
       .select({ id: evalExperiments.id })
       .from(evalExperiments)
       .where(and(eq(evalExperiments.id, request.params.id), eq(evalExperiments.orgId, orgId)))
@@ -325,7 +330,7 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
-    const rows = await db
+    const rows = await d
       .select()
       .from(evalExperimentResults)
       .where(and(...conditions))
@@ -349,6 +354,7 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/eval/experiments/compare — compare two experiments
   app.get('/v1/eval/experiments/compare', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const { experiment_a, experiment_b } = z
       .object({
         experiment_a: z.string().min(1),
@@ -358,12 +364,12 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
 
     // Load both experiments
     const [expA, expB] = await Promise.all([
-      db
+      d
         .select()
         .from(evalExperiments)
         .where(and(eq(evalExperiments.id, experiment_a), eq(evalExperiments.orgId, orgId)))
         .limit(1),
-      db
+      d
         .select()
         .from(evalExperiments)
         .where(and(eq(evalExperiments.id, experiment_b), eq(evalExperiments.orgId, orgId)))
@@ -375,11 +381,11 @@ export function evalExperimentRoutes(app: FastifyInstance, db: DbClient): void {
 
     // Load per-case results for both
     const [resultsA, resultsB] = await Promise.all([
-      db
+      d
         .select()
         .from(evalExperimentResults)
         .where(eq(evalExperimentResults.experimentId, experiment_a)),
-      db
+      d
         .select()
         .from(evalExperimentResults)
         .where(eq(evalExperimentResults.experimentId, experiment_b)),
@@ -496,10 +502,11 @@ export function evalBaselineRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/eval/baselines — set baseline from experiment
   app.post('/v1/eval/baselines', async (request, reply) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = setBaselineSchema.parse(request.body);
 
     // Load experiment
-    const experiment = await db
+    const experiment = await d
       .select()
       .from(evalExperiments)
       .where(and(eq(evalExperiments.id, body.experiment_id), eq(evalExperiments.orgId, orgId)))
@@ -511,7 +518,7 @@ export function evalBaselineRoutes(app: FastifyInstance, db: DbClient): void {
     }
 
     // Load per-case results to build per_case_scores
-    const results = await db
+    const results = await d
       .select()
       .from(evalExperimentResults)
       .where(eq(evalExperimentResults.experimentId, body.experiment_id));
@@ -522,7 +529,7 @@ export function evalBaselineRoutes(app: FastifyInstance, db: DbClient): void {
     }
 
     // Deactivate existing active baseline for this agent+dataset
-    await db
+    await d
       .update(evalBaselines)
       .set({ isActive: false })
       .where(
@@ -537,7 +544,7 @@ export function evalBaselineRoutes(app: FastifyInstance, db: DbClient): void {
     const id = newId('ebl');
     const now = new Date();
 
-    await db.insert(evalBaselines).values({
+    await d.insert(evalBaselines).values({
       id,
       orgId,
       agentId: experiment[0].agentId,
@@ -551,7 +558,7 @@ export function evalBaselineRoutes(app: FastifyInstance, db: DbClient): void {
       createdAt: now,
     });
 
-    const result = await db
+    const result = await d
       .select()
       .from(evalBaselines)
       .where(eq(evalBaselines.id, id))
@@ -564,6 +571,7 @@ export function evalBaselineRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/eval/baselines/active — get active baseline
   app.get('/v1/eval/baselines/active', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const { agent_id, dataset_id } = z
       .object({
         agent_id: z.string().min(1),
@@ -571,7 +579,7 @@ export function evalBaselineRoutes(app: FastifyInstance, db: DbClient): void {
       })
       .parse(request.query);
 
-    const result = await db
+    const result = await d
       .select()
       .from(evalBaselines)
       .where(

@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
+import { getDb } from '../lib/request-db.js';
 import { notFound, validationError } from '../plugins/error-handler.js';
 
 const updateEnvSchema = z.object({
@@ -16,8 +17,9 @@ export function environmentRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/environments
   app.get('/v1/environments', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
-    const envs = await db
+    const envs = await d
       .select()
       .from(environments)
       .where(eq(environments.orgId, orgId));
@@ -38,6 +40,7 @@ export function environmentRoutes(app: FastifyInstance, db: DbClient): void {
   // PATCH /v1/environments/:id
   app.patch<{ Params: { id: string } }>('/v1/environments/:id', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = updateEnvSchema.parse(request.body);
 
     const updates: Record<string, unknown> = {};
@@ -50,7 +53,7 @@ export function environmentRoutes(app: FastifyInstance, db: DbClient): void {
       throw validationError('No fields to update');
     }
 
-    const result = await db
+    const result = await d
       .update(environments)
       .set(updates)
       .where(and(eq(environments.id, request.params.id), eq(environments.orgId, orgId)))

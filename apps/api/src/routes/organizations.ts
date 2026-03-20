@@ -5,6 +5,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
+import { getDb } from '../lib/request-db.js';
 import { forbidden, notFound, validationError } from '../plugins/error-handler.js';
 
 const updateOrgSchema = z.object({
@@ -16,8 +17,9 @@ export function organizationRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/organization — current org
   app.get('/v1/organization', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
-    const result = await db
+    const result = await d
       .select()
       .from(organizations)
       .where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt)))
@@ -40,6 +42,7 @@ export function organizationRoutes(app: FastifyInstance, db: DbClient): void {
   // PATCH /v1/organization — update org (admin only)
   app.patch('/v1/organization', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
     // Check admin role
     if (request.userRole && request.userRole !== 'admin') {
@@ -56,7 +59,7 @@ export function organizationRoutes(app: FastifyInstance, db: DbClient): void {
       throw validationError('No fields to update');
     }
 
-    const result = await db
+    const result = await d
       .update(organizations)
       .set(updates)
       .where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt)))
@@ -79,8 +82,9 @@ export function memberRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/organization/members
   app.get('/v1/organization/members', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
-    const members = await db
+    const members = await d
       .select()
       .from(organizationMembers)
       .where(eq(organizationMembers.orgId, orgId));
@@ -98,6 +102,7 @@ export function memberRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/organization/members/invite (admin only)
   app.post('/v1/organization/members/invite', async (request, reply) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
     if (request.userRole && request.userRole !== 'admin') {
       throw forbidden('Only admins can invite members');
@@ -112,7 +117,7 @@ export function memberRoutes(app: FastifyInstance, db: DbClient): void {
     // Create a pending member record
     // In production, this would also send an invite email with a token
     const id = newId('mem');
-    await db.insert(organizationMembers).values({
+    await d.insert(organizationMembers).values({
       id,
       orgId,
       userId: `pending:${body.email}`, // Placeholder until user accepts invite
@@ -133,6 +138,7 @@ export function memberRoutes(app: FastifyInstance, db: DbClient): void {
     '/v1/organization/members/:id',
     async (request) => {
       const orgId = request.orgId!;
+      const d = getDb(request, db);
 
       if (request.userRole && request.userRole !== 'admin') {
         throw forbidden('Only admins can change member roles');
@@ -143,7 +149,7 @@ export function memberRoutes(app: FastifyInstance, db: DbClient): void {
       });
       const body = roleSchema.parse(request.body);
 
-      const result = await db
+      const result = await d
         .update(organizationMembers)
         .set({ role: body.role })
         .where(
@@ -171,13 +177,14 @@ export function memberRoutes(app: FastifyInstance, db: DbClient): void {
     '/v1/organization/members/:id',
     async (request) => {
       const orgId = request.orgId!;
+      const d = getDb(request, db);
       const memberId = request.params.id;
 
       if (request.userRole && request.userRole !== 'admin') {
         throw forbidden('Only admins can remove members');
       }
 
-      const result = await db
+      const result = await d
         .delete(organizationMembers)
         .where(
           and(eq(organizationMembers.id, memberId), eq(organizationMembers.orgId, orgId)),

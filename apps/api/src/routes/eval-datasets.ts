@@ -11,6 +11,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
+import { getDb } from '../lib/request-db.js';
 import { badRequest, notFound, conflict } from '../plugins/error-handler.js';
 
 // ── Zod Schemas ─────────────────────────────────────────────────────
@@ -205,10 +206,11 @@ export function evalDatasetRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/eval/datasets — create dataset
   app.post('/v1/eval/datasets', async (request, reply) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = createDatasetSchema.parse(request.body);
 
     // Check name uniqueness within org (latest version)
-    const existing = await db
+    const existing = await d
       .select({ id: evalDatasets.id })
       .from(evalDatasets)
       .where(
@@ -221,7 +223,7 @@ export function evalDatasetRoutes(app: FastifyInstance, db: DbClient): void {
     const id = newId('eds');
     const now = new Date();
 
-    await db.insert(evalDatasets).values({
+    await d.insert(evalDatasets).values({
       id,
       orgId,
       name: body.name,
@@ -250,6 +252,7 @@ export function evalDatasetRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/eval/datasets — list datasets
   app.get('/v1/eval/datasets', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const query = request.query as Record<string, string>;
     const { limit, cursor, order } = paginationSchema.parse(query);
 
@@ -269,7 +272,7 @@ export function evalDatasetRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
-    const rows = await db
+    const rows = await d
       .select()
       .from(evalDatasets)
       .where(and(...conditions))
@@ -289,7 +292,8 @@ export function evalDatasetRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/eval/datasets/:dataset_id — get dataset
   app.get<{ Params: { dataset_id: string } }>('/v1/eval/datasets/:dataset_id', async (request) => {
     const orgId = request.orgId!;
-    const result = await db
+    const d = getDb(request, db);
+    const result = await d
       .select()
       .from(evalDatasets)
       .where(
@@ -310,7 +314,8 @@ export function evalDatasetRoutes(app: FastifyInstance, db: DbClient): void {
     '/v1/eval/datasets/:dataset_id',
     async (request, reply) => {
       const orgId = request.orgId!;
-      const result = await db
+      const d = getDb(request, db);
+      const result = await d
         .update(evalDatasets)
         .set({ deletedAt: new Date(), updatedAt: new Date() })
         .where(
@@ -337,10 +342,11 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
     '/v1/eval/datasets/:dataset_id/cases',
     async (request, reply) => {
       const orgId = request.orgId!;
+      const d = getDb(request, db);
       const body = createCaseSchema.parse(request.body);
 
       // Verify dataset exists
-      const dataset = await db
+      const dataset = await d
         .select({ id: evalDatasets.id, caseCount: evalDatasets.caseCount })
         .from(evalDatasets)
         .where(
@@ -357,7 +363,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
       const id = newId('edc');
       const now = new Date();
 
-      await db.insert(evalDatasetCases).values({
+      await d.insert(evalDatasetCases).values({
         id,
         datasetId: request.params.dataset_id,
         orgId,
@@ -377,7 +383,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
       });
 
       // Increment case_count
-      await db
+      await d
         .update(evalDatasets)
         .set({
           caseCount: sql`${evalDatasets.caseCount} + 1`,
@@ -385,7 +391,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
         })
         .where(eq(evalDatasets.id, request.params.dataset_id));
 
-      const inserted = await db
+      const inserted = await d
         .select()
         .from(evalDatasetCases)
         .where(eq(evalDatasetCases.id, id))
@@ -401,10 +407,11 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
     '/v1/eval/datasets/:dataset_id/cases/bulk',
     async (request, reply) => {
       const orgId = request.orgId!;
+      const d = getDb(request, db);
       const cases = z.array(createCaseSchema).min(1).max(1000).parse(request.body);
 
       // Verify dataset exists
-      const dataset = await db
+      const dataset = await d
         .select({ id: evalDatasets.id, caseCount: evalDatasets.caseCount })
         .from(evalDatasets)
         .where(
@@ -440,10 +447,10 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
         createdAt: now,
       }));
 
-      await db.insert(evalDatasetCases).values(values);
+      await d.insert(evalDatasetCases).values(values);
 
       // Increment case_count by number of cases
-      await db
+      await d
         .update(evalDatasets)
         .set({
           caseCount: sql`${evalDatasets.caseCount} + ${cases.length}`,
@@ -464,10 +471,11 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
     '/v1/eval/datasets/:dataset_id/cases',
     async (request) => {
       const orgId = request.orgId!;
+      const d = getDb(request, db);
       const { limit, cursor, order } = paginationSchema.parse(request.query);
 
       // Verify dataset exists
-      const dataset = await db
+      const dataset = await d
         .select({ id: evalDatasets.id })
         .from(evalDatasets)
         .where(
@@ -497,7 +505,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
         }
       }
 
-      const rows = await db
+      const rows = await d
         .select()
         .from(evalDatasetCases)
         .where(and(...conditions))
@@ -524,8 +532,9 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
     '/v1/eval/datasets/:dataset_id/cases/:case_id',
     async (request) => {
       const orgId = request.orgId!;
+      const d = getDb(request, db);
 
-      const result = await db
+      const result = await d
         .select()
         .from(evalDatasetCases)
         .where(
@@ -547,6 +556,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
     '/v1/eval/datasets/:dataset_id/cases/:case_id',
     async (request) => {
       const orgId = request.orgId!;
+      const d = getDb(request, db);
       const body = updateCaseSchema.parse(request.body);
 
       const updates: Record<string, unknown> = {};
@@ -588,7 +598,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
         throw badRequest('No fields to update');
       }
 
-      const result = await db
+      const result = await d
         .update(evalDatasetCases)
         .set(updates)
         .where(
@@ -610,8 +620,9 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
     '/v1/eval/datasets/:dataset_id/cases/:case_id',
     async (request, reply) => {
       const orgId = request.orgId!;
+      const d = getDb(request, db);
 
-      const result = await db
+      const result = await d
         .delete(evalDatasetCases)
         .where(
           and(
@@ -625,7 +636,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
       if (!result[0]) throw notFound('Case not found');
 
       // Decrement case_count
-      await db
+      await d
         .update(evalDatasets)
         .set({
           caseCount: sql`GREATEST(${evalDatasets.caseCount} - 1, 0)`,
@@ -643,10 +654,11 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
     '/v1/eval/datasets/:dataset_id/cases/from-run',
     async (request, reply) => {
       const orgId = request.orgId!;
+      const d = getDb(request, db);
       const body = fromRunSchema.parse(request.body);
 
       // Verify dataset exists
-      const dataset = await db
+      const dataset = await d
         .select({ id: evalDatasets.id, caseCount: evalDatasets.caseCount })
         .from(evalDatasets)
         .where(
@@ -661,7 +673,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
       if (!dataset[0]) throw notFound('Dataset not found');
 
       // Load run
-      const run = await db
+      const run = await d
         .select()
         .from(runs)
         .where(and(eq(runs.id, body.run_id), eq(runs.orgId, orgId)))
@@ -670,7 +682,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
       if (!run[0]) throw notFound('Run not found');
 
       // Load run steps
-      const steps = await db
+      const steps = await d
         .select()
         .from(runSteps)
         .where(eq(runSteps.runId, body.run_id))
@@ -696,7 +708,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
       const id = newId('edc');
       const now = new Date();
 
-      await db.insert(evalDatasetCases).values({
+      await d.insert(evalDatasetCases).values({
         id,
         datasetId: request.params.dataset_id,
         orgId,
@@ -715,7 +727,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
       });
 
       // Increment case_count
-      await db
+      await d
         .update(evalDatasets)
         .set({
           caseCount: sql`${evalDatasets.caseCount} + 1`,
@@ -723,7 +735,7 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
         })
         .where(eq(evalDatasets.id, request.params.dataset_id));
 
-      const inserted = await db
+      const inserted = await d
         .select()
         .from(evalDatasetCases)
         .where(eq(evalDatasetCases.id, id))

@@ -10,6 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
+import { getDb } from '../lib/request-db.js';
 import { notFound } from '../plugins/error-handler.js';
 
 // ── Schemas ─────────────────────────────────────────────────────────
@@ -76,12 +77,13 @@ export function sessionRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/agents/:agent_id/sessions — create session
   app.post<{ Params: { agent_id: string } }>('/v1/agents/:agent_id/sessions', async (request, reply) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = createSessionSchema.parse(request.body ?? {});
 
     // Resolve agent by ID or slug
     const agentParam = request.params.agent_id;
     const isAgentId = agentParam.startsWith('ag_');
-    const agentResult = await db
+    const agentResult = await d
       .select({ id: agents.id })
       .from(agents)
       .where(and(
@@ -97,7 +99,7 @@ export function sessionRoutes(app: FastifyInstance, db: DbClient): void {
     const id = newId('ses');
     const now = new Date();
 
-    await db.insert(sessions).values({
+    await d.insert(sessions).values({
       id,
       orgId,
       agentId: resolvedAgentId,
@@ -120,12 +122,13 @@ export function sessionRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/agents/:agent_id/sessions — list sessions
   app.get<{ Params: { agent_id: string } }>('/v1/agents/:agent_id/sessions', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const query = listPaginationSchema.parse(request.query);
 
     // Resolve agent by ID or slug
     const agentParam = request.params.agent_id;
     const isAgentId = agentParam.startsWith('ag_');
-    const agentLookup = await db
+    const agentLookup = await d
       .select({ id: agents.id })
       .from(agents)
       .where(and(
@@ -149,7 +152,7 @@ export function sessionRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
-    const rows = await db
+    const rows = await d
       .select()
       .from(sessions)
       .where(and(...conditions))
@@ -169,10 +172,11 @@ export function sessionRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/sessions/:session_id/messages — list session messages
   app.get<{ Params: { session_id: string } }>('/v1/sessions/:session_id/messages', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const query = messagesPaginationSchema.parse(request.query);
 
     // Verify session exists and belongs to org
-    const sessionResult = await db
+    const sessionResult = await d
       .select({ id: sessions.id })
       .from(sessions)
       .where(and(eq(sessions.id, request.params.session_id), eq(sessions.orgId, orgId), isNull(sessions.deletedAt)))
@@ -189,7 +193,7 @@ export function sessionRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
-    const rows = await db
+    const rows = await d
       .select()
       .from(messages)
       .where(and(...conditions))
@@ -209,8 +213,9 @@ export function sessionRoutes(app: FastifyInstance, db: DbClient): void {
   // DELETE /v1/sessions/:session_id — soft delete
   app.delete<{ Params: { session_id: string } }>('/v1/sessions/:session_id', async (request, reply) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
-    const result = await db
+    const result = await d
       .update(sessions)
       .set({ deletedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(sessions.id, request.params.session_id), eq(sessions.orgId, orgId), isNull(sessions.deletedAt)))
