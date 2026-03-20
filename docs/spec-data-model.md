@@ -106,6 +106,11 @@ Tables that support soft delete:
 
 Soft-deleted rows are excluded by default via RLS policies. A `deleted_at IS NULL` predicate is included in every RLS `USING` clause for soft-delete-enabled tables.
 
+**Cascade behavior for soft-deleted parents:**
+- When an `organization` is soft-deleted, its `agents`, `sessions`, `knowledge_bases`, and `eval_datasets` are also soft-deleted (application-level cascade, not DB constraint). Hard-delete children (runs, run_steps, messages, api_keys, etc.) remain intact for audit purposes but become inaccessible via RLS.
+- When an `agent` is soft-deleted, its `agent_versions`, `deployments`, `knowledge_bases`, and `connector_connections` remain intact. Runs already completed are unaffected. New runs are rejected at the API layer.
+- Permanent cleanup of soft-deleted records (and their children) is handled by the data retention job after the configured retention period.
+
 ### JSONB Column Contract
 
 JSONB columns store semi-structured data that varies per use case (guardrails config, tool parameters, grader scores). Each JSONB column has a documented TypeScript type that serves as the schema contract. Application code validates JSONB with Zod before insert.
@@ -173,6 +178,26 @@ export const deploymentStatusEnum = pgEnum("deployment_status", [
   "active",
   "superseded",
   "rolled_back",
+]);
+
+export const approvalStatusEnum = pgEnum("approval_status", [
+  "pending",
+  "approved",
+  "denied",
+]);
+
+export const alertConditionTypeEnum = pgEnum("alert_condition_type", [
+  "error_rate",
+  "latency_p95",
+  "cost_per_run",
+  "run_failure_count",
+]);
+
+export const notificationTypeEnum = pgEnum("notification_type", [
+  "alert_triggered",
+  "approval_requested",
+  "deploy_completed",
+  "eval_completed",
 ]);
 ```
 
@@ -644,7 +669,8 @@ export const runs = pgTable(
     parentRunId: varchar("parent_run_id", { length: 30 })
       .references(() => runs.id, { onDelete: "set null" }),
     environmentId: varchar("environment_id", { length: 30 })
-      .references(() => environments.id, { onDelete: "set null" }),
+      .notNull()
+      .references(() => environments.id, { onDelete: "restrict" }),
     status: runStatusEnum("status").notNull().default("queued"),
     input: jsonb("input").$type<RunInput>().notNull(), // structured input envelope
     output: jsonb("output").$type<RunOutput>(), // structured output envelope
@@ -682,6 +708,8 @@ export const runs = pgTable(
     ),
     // Composite for cost analysis: per-org, per-day
     index("runs_org_created_idx").on(table.orgId, table.createdAt),
+    // Composite for per-environment queries (dashboard filtering)
+    index("runs_org_env_created_idx").on(table.orgId, table.environmentId, table.createdAt),
   ]
 );
 
@@ -741,9 +769,11 @@ export const runSteps = pgTable(
     costUsd: doublePrecision("cost_usd").notNull().default(0),
     durationMs: integer("duration_ms"),
     error: text("error"),
-    approvalStatus: varchar("approval_status", { length: 20 }), // null | "pending" | "approved" | "denied"
+    outputTruncated: boolean("output_truncated").notNull().default(false), // true when tool result exceeded 10KB and was truncated
+    approvalStatus: approvalStatusEnum("approval_status"), // null for non-approval steps
     approvalResolvedBy: varchar("approval_resolved_by", { length: 255 }), // user_id (Better Auth)
     approvalResolvedAt: timestamp("approval_resolved_at", { withTimezone: true }),
+    approvalWaitStartedAt: timestamp("approval_wait_started_at", { withTimezone: true }), // for measuring approval latency
     metadata: jsonb("metadata").$type<StepMetadata>().default({}),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -984,6 +1014,10 @@ export const evalExperiments = pgTable(
     error: text("error"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    // CI/CD context — links experiment to the commit/PR that triggered it
+    commitSha: varchar("commit_sha", { length: 40 }),
+    prNumber: integer("pr_number"),
+    ciRunUrl: varchar("ci_run_url", { length: 500 }),
     createdBy: varchar("created_by", { length: 255 }), // user_id (Better Auth)
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -998,6 +1032,12 @@ export const evalExperiments = pgTable(
     index("eval_experiments_agent_id_idx").on(table.agentId),
     index("eval_experiments_version_id_idx").on(table.versionId),
     index("eval_experiments_created_at_idx").on(table.createdAt),
+    // Composite for finding latest experiment per agent+dataset (baseline comparisons)
+    index("eval_experiments_agent_dataset_created_idx").on(
+      table.agentId,
+      table.datasetId,
+      table.createdAt
+    ),
   ]
 );
 
@@ -1200,6 +1240,8 @@ export const knowledgeChunks = pgTable(
     embedding: vector("embedding", { dimensions: 1536 }),
     tsv: tsvector("tsv"), // generated tsvector for full-text search
     tokenCount: integer("token_count").notNull().default(0),
+    embeddingModel: varchar("embedding_model", { length: 100 }), // e.g., "text-embedding-3-small" — enables re-embedding when model changes
+    embeddedAt: timestamp("embedded_at", { withTimezone: true }), // when embedding was last generated
     metadata: jsonb("metadata").$type<ChunkMetadata>().default({}),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -1426,9 +1468,10 @@ export const connectors = pgTable("connectors", {
   iconUrl: text("icon_url"),                       // URL to connector icon
   category: text("category").notNull(),            // "communication" | "productivity" | "dev_tools" | "crm" | "infrastructure"
   authType: text("auth_type").notNull(),           // "oauth2" | "api_key"
-  oauthConfig: jsonb("oauth_config"),              // OAuthConfig: { authorizationUrl, tokenUrl, scopes, clientIdEnvVar, clientSecretEnvVar }
-  toolsManifest: jsonb("tools_manifest").notNull(), // Array of { name, description, riskLevel, inputSchema }
+  oauthConfig: jsonb("oauth_config").$type<OAuthConfig>(),
+  toolsManifest: jsonb("tools_manifest").$type<ConnectorToolManifest[]>().notNull(),
   status: text("status").notNull().default("available"), // "available" | "coming_soon" | "beta"
+  deprecatedAt: timestamp("deprecated_at", { withTimezone: true }), // set when connector is sunset
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1444,6 +1487,13 @@ interface OAuthConfig {
   scopes: string[];              // e.g., ["https://www.googleapis.com/auth/gmail.modify"]
   client_id_env_var: string;     // Name of Fly secret holding client ID (e.g., "GMAIL_CLIENT_ID")
   client_secret_env_var: string; // Name of Fly secret holding client secret
+}
+
+interface ConnectorToolManifest {
+  name: string;           // e.g., "gmail.send"
+  description: string;
+  risk_level: "read" | "write" | "admin";
+  input_schema: Record<string, unknown>; // JSON Schema
 }
 ```
 
@@ -1468,7 +1518,10 @@ export const connectorConnections = pgTable(
     refreshIv: text("refresh_iv"),
     tokenExpiresAt: timestamp("token_expires_at"),   // When the access token expires
     lastUsedAt: timestamp("last_used_at"),
-    metadata: jsonb("metadata"),                     // Connector-specific metadata (e.g., { host, database } for PostgreSQL)
+    lastRefreshAt: timestamp("last_refresh_at"),     // Last successful token refresh
+    refreshFailureCount: integer("refresh_failure_count").notNull().default(0), // Consecutive refresh failures
+    disconnectedAt: timestamp("disconnected_at"),    // Set when user disconnects (soft delete)
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(), // Connector-specific metadata (e.g., { host, database } for PostgreSQL)
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -1497,7 +1550,7 @@ export const alertRules = pgTable(
     agentId: varchar("agent_id", { length: 30 })
       .references(() => agents.id, { onDelete: "cascade" }), // nullable = org-wide
     name: varchar("name", { length: 255 }).notNull(),
-    conditionType: varchar("condition_type", { length: 50 }).notNull(), // "error_rate" | "latency_p95" | "cost_per_run" | "run_failure_count"
+    conditionType: alertConditionTypeEnum("condition_type").notNull(),
     threshold: doublePrecision("threshold").notNull(),
     windowMinutes: integer("window_minutes").notNull().default(5),
     comparisonOp: varchar("comparison_op", { length: 10 }).notNull().default("gt"), // "gt" | "gte" | "lt" | "lte"
@@ -1546,7 +1599,7 @@ export const notifications = pgTable(
     userId: varchar("user_id", { length: 255 }).notNull(), // Better Auth user ID
     alertRuleId: varchar("alert_rule_id", { length: 30 })
       .references(() => alertRules.id, { onDelete: "set null" }),
-    type: varchar("type", { length: 50 }).notNull(), // "alert_triggered" | "approval_requested" | "deploy_completed" | "eval_completed"
+    type: notificationTypeEnum("type").notNull(),
     title: varchar("title", { length: 255 }).notNull(),
     body: text("body"),
     resourceType: varchar("resource_type", { length: 50 }), // "run" | "deployment" | "experiment"

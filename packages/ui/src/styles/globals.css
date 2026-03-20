@@ -1,0 +1,341 @@
+/*
+ * Agentsy global styles and CSS custom properties.
+ *
+ * Import this file at the root of any consuming application to get the
+ * design token custom properties and base reset styles.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------ */
+/* CSS Custom Properties — Light mode (default)                        */
+/* ------------------------------------------------------------------ */
+
+@layer base {
+  :root {
+    /* ---- Primary (blue) ---- */
+    --color-primary-50: oklch(0.97 0.02 250);
+    --color-primary-100: oklch(0.93 0.04 250);
+    --color-primary-200: oklch(0.87 0.08 250);
+    --color-primary-300: oklch(0.78 0.12 250);
+    --color-primary-400: oklch(0.70 0.14 250);
+    --color-primary-500: oklch(0.65 0.15 250);
+    --color-primary-600: oklch(0.57 0.15 250);
+    --color-primary-700: oklch(0.49 0.14 250);
+    --color-primary-800: oklch(0.41 0.12 250);
+    --color-primary-900: oklch(0.35 0.10 250);
+    --color-primary-950: oklch(0.25 0.07 250);
+
+    /* ---- Neutral (gray) ---- */
+    --color-neutral-50: oklch(0.98 0.003 260);
+    --color-neutral-100: oklch(0.96 0.005 260);
+    --color-neutral-200: oklch(0.92 0.005 260);
+    --color-neutral-300: oklch(0.87 0.005 260);
+    --color-neutral-400: oklch(0.70 0.01 260);
+    --color-neutral-500: oklch(0.55 0.01 260);
+    --color-neutral-600: oklch(0.45 0.01 260);
+    --color-neutral-700: oklch(0.37 0.01 260);
+    --color-neutral-800: oklch(0.30 0.01 260);
+    --color-neutral-900: oklch(0.22 0.01 260);
+    --color-neutral-950: oklch(0.15 0.01 260);
+
+    /* ---- Success (green) ---- */
+    --color-success-50: oklch(0.97 0.02 155);
+    --color-success-100: oklch(0.93 0.05 155);
+    --color-success-200: oklch(0.87 0.10 155);
+    --color-success-300: oklch(0.80 0.13 155);
+    --color-success-400: oklch(0.76 0.14 155);
+    --color-success-500: oklch(0.72 0.15 155);
+    --color-success-600: oklch(0.62 0.14 155);
+    --color-success-700: oklch(0.52 0.12 155);
+    --color-success-800: oklch(0.43 0.10 155);
+    --color-success-900: oklch(0.35 0.08 155);
+    --color-success-950: oklch(0.25 0.06 155);
+
+    /* ---- Warning (amber) ---- */
+    --color-warning-50: oklch(0.97 0.02 65);
+    --color-warning-100: oklch(0.93 0.05 65);
+    --color-warning-200: oklch(0.88 0.10 65);
+    --color-warning-300: oklch(0.82 0.13 65);
+    --color-warning-400: oklch(0.78 0.14 65);
+    --color-warning-500: oklch(0.75 0.15 65);
+    --color-warning-600: oklch(0.65 0.14 65);
+    --color-warning-700: oklch(0.55 0.12 65);
+    --color-warning-800: oklch(0.45 0.10 65);
+    --color-warning-900: oklch(0.37 0.08 65);
+    --color-warning-950: oklch(0.27 0.06 65);
+
+    /* ---- Error (red) ---- */
+    --color-error-50: oklch(0.97 0.02 25);
+    --color-error-100: oklch(0.93 0.05 25);
+    --color-error-200: oklch(0.87 0.10 25);
+    --color-error-300: oklch(0.78 0.15 25);
+    --color-error-400: oklch(0.72 0.18 25);
+    --color-error-500: oklch(0.65 0.20 25);
+    --color-error-600: oklch(0.55 0.19 25);
+    --color-error-700: oklch(0.47 0.16 25);
+    --color-error-800: oklch(0.40 0.13 25);
+    --color-error-900: oklch(0.33 0.10 25);
+    --color-error-950: oklch(0.23 0.07 25);
+
+    /* ---- Info (blue, alias of primary) ---- */
+    --color-info-50: oklch(0.97 0.02 250);
+    --color-info-100: oklch(0.93 0.04 250);
+    --color-info-200: oklch(0.87 0.08 250);
+    --color-info-300: oklch(0.78 0.12 250);
+    --color-info-400: oklch(0.70 0.14 250);
+    --color-info-500: oklch(0.65 0.15 250);
+    --color-info-600: oklch(0.57 0.15 250);
+    --color-info-700: oklch(0.49 0.14 250);
+    --color-info-800: oklch(0.41 0.12 250);
+    --color-info-900: oklch(0.35 0.10 250);
+    --color-info-950: oklch(0.25 0.07 250);
+
+    /* ---- Surfaces ---- */
+    --color-bg-page: oklch(0.97 0.005 260);
+    --color-bg-card: oklch(1.0 0 0);
+    --color-bg-hover: oklch(0.96 0.005 260);
+    --color-bg-overlay: oklch(0.20 0.01 260 / 0.5);
+
+    /* ---- Text ---- */
+    --color-text-primary: oklch(0.20 0.01 260);
+    --color-text-secondary: oklch(0.55 0.01 260);
+    --color-text-tertiary: oklch(0.70 0.01 260);
+    --color-text-inverse: oklch(0.98 0.003 260);
+
+    /* ---- Borders ---- */
+    --color-border: oklch(0.90 0.005 260);
+    --color-border-strong: oklch(0.80 0.005 260);
+    --color-border-focus: oklch(0.65 0.15 250);
+
+    /* ---- Typography ---- */
+    --font-family-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    --font-family-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Consolas, monospace;
+
+    --font-size-xs: 0.75rem;
+    --font-size-sm: 0.8125rem;
+    --font-size-base: 0.875rem;
+    --font-size-md: 1rem;
+    --font-size-lg: 1.25rem;
+    --font-size-xl: 1.5rem;
+    --font-size-2xl: 2rem;
+
+    --font-weight-normal: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+
+    --line-height-tight: 1.2;
+    --line-height-normal: 1.5;
+    --line-height-relaxed: 1.6;
+
+    /* ---- Spacing ---- */
+    --space-0: 0px;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-8: 32px;
+    --space-10: 40px;
+    --space-12: 48px;
+    --space-16: 64px;
+    --space-20: 80px;
+    --space-24: 96px;
+
+    /* ---- Radii ---- */
+    --radius-none: 0px;
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-xl: 12px;
+    --radius-2xl: 16px;
+    --radius-full: 9999px;
+
+    /* ---- Shadows ---- */
+    --shadow-sm: 0 1px 2px 0 oklch(0.20 0.01 260 / 0.05);
+    --shadow-md: 0 4px 6px -1px oklch(0.20 0.01 260 / 0.07), 0 2px 4px -2px oklch(0.20 0.01 260 / 0.05);
+    --shadow-lg: 0 10px 15px -3px oklch(0.20 0.01 260 / 0.08), 0 4px 6px -4px oklch(0.20 0.01 260 / 0.05);
+    --shadow-xl: 0 20px 25px -5px oklch(0.20 0.01 260 / 0.10), 0 8px 10px -6px oklch(0.20 0.01 260 / 0.05);
+
+    /* ---- Transitions ---- */
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Dark mode overrides                                               */
+  /* ---------------------------------------------------------------- */
+
+  .dark {
+    /* ---- Primary (blue) ---- */
+    --color-primary-50: oklch(0.20 0.03 250);
+    --color-primary-100: oklch(0.25 0.05 250);
+    --color-primary-200: oklch(0.30 0.08 250);
+    --color-primary-300: oklch(0.38 0.10 250);
+    --color-primary-400: oklch(0.50 0.13 250);
+    --color-primary-500: oklch(0.65 0.15 250);
+    --color-primary-600: oklch(0.72 0.14 250);
+    --color-primary-700: oklch(0.78 0.12 250);
+    --color-primary-800: oklch(0.85 0.08 250);
+    --color-primary-900: oklch(0.90 0.05 250);
+    --color-primary-950: oklch(0.95 0.02 250);
+
+    /* ---- Neutral (gray) ---- */
+    --color-neutral-50: oklch(0.15 0.005 260);
+    --color-neutral-100: oklch(0.18 0.005 260);
+    --color-neutral-200: oklch(0.22 0.005 260);
+    --color-neutral-300: oklch(0.28 0.005 260);
+    --color-neutral-400: oklch(0.40 0.01 260);
+    --color-neutral-500: oklch(0.55 0.01 260);
+    --color-neutral-600: oklch(0.65 0.01 260);
+    --color-neutral-700: oklch(0.75 0.01 260);
+    --color-neutral-800: oklch(0.85 0.005 260);
+    --color-neutral-900: oklch(0.92 0.003 260);
+    --color-neutral-950: oklch(0.97 0.003 260);
+
+    /* ---- Success (green) ---- */
+    --color-success-50: oklch(0.18 0.03 155);
+    --color-success-100: oklch(0.22 0.05 155);
+    --color-success-200: oklch(0.28 0.08 155);
+    --color-success-300: oklch(0.38 0.10 155);
+    --color-success-400: oklch(0.52 0.13 155);
+    --color-success-500: oklch(0.65 0.15 155);
+    --color-success-600: oklch(0.72 0.14 155);
+    --color-success-700: oklch(0.80 0.12 155);
+    --color-success-800: oklch(0.87 0.08 155);
+    --color-success-900: oklch(0.92 0.05 155);
+    --color-success-950: oklch(0.96 0.02 155);
+
+    /* ---- Warning (amber) ---- */
+    --color-warning-50: oklch(0.18 0.03 65);
+    --color-warning-100: oklch(0.22 0.05 65);
+    --color-warning-200: oklch(0.28 0.08 65);
+    --color-warning-300: oklch(0.38 0.10 65);
+    --color-warning-400: oklch(0.52 0.13 65);
+    --color-warning-500: oklch(0.68 0.15 65);
+    --color-warning-600: oklch(0.75 0.14 65);
+    --color-warning-700: oklch(0.82 0.12 65);
+    --color-warning-800: oklch(0.88 0.08 65);
+    --color-warning-900: oklch(0.93 0.05 65);
+    --color-warning-950: oklch(0.96 0.02 65);
+
+    /* ---- Error (red) ---- */
+    --color-error-50: oklch(0.18 0.04 25);
+    --color-error-100: oklch(0.22 0.06 25);
+    --color-error-200: oklch(0.28 0.10 25);
+    --color-error-300: oklch(0.38 0.14 25);
+    --color-error-400: oklch(0.50 0.17 25);
+    --color-error-500: oklch(0.62 0.20 25);
+    --color-error-600: oklch(0.70 0.18 25);
+    --color-error-700: oklch(0.78 0.14 25);
+    --color-error-800: oklch(0.85 0.10 25);
+    --color-error-900: oklch(0.92 0.05 25);
+    --color-error-950: oklch(0.96 0.02 25);
+
+    /* ---- Info (blue) ---- */
+    --color-info-50: oklch(0.20 0.03 250);
+    --color-info-100: oklch(0.25 0.05 250);
+    --color-info-200: oklch(0.30 0.08 250);
+    --color-info-300: oklch(0.38 0.10 250);
+    --color-info-400: oklch(0.50 0.13 250);
+    --color-info-500: oklch(0.65 0.15 250);
+    --color-info-600: oklch(0.72 0.14 250);
+    --color-info-700: oklch(0.78 0.12 250);
+    --color-info-800: oklch(0.85 0.08 250);
+    --color-info-900: oklch(0.90 0.05 250);
+    --color-info-950: oklch(0.95 0.02 250);
+
+    /* ---- Surfaces ---- */
+    --color-bg-page: oklch(0.15 0.005 260);
+    --color-bg-card: oklch(0.20 0.005 260);
+    --color-bg-hover: oklch(0.24 0.005 260);
+    --color-bg-overlay: oklch(0.10 0.005 260 / 0.7);
+
+    /* ---- Text ---- */
+    --color-text-primary: oklch(0.95 0.003 260);
+    --color-text-secondary: oklch(0.65 0.01 260);
+    --color-text-tertiary: oklch(0.45 0.01 260);
+    --color-text-inverse: oklch(0.15 0.005 260);
+
+    /* ---- Borders ---- */
+    --color-border: oklch(0.28 0.005 260);
+    --color-border-strong: oklch(0.38 0.005 260);
+    --color-border-focus: oklch(0.65 0.15 250);
+
+    /* ---- Shadows (darker in dark mode) ---- */
+    --shadow-sm: 0 1px 2px 0 oklch(0.0 0 0 / 0.2);
+    --shadow-md: 0 4px 6px -1px oklch(0.0 0 0 / 0.3), 0 2px 4px -2px oklch(0.0 0 0 / 0.2);
+    --shadow-lg: 0 10px 15px -3px oklch(0.0 0 0 / 0.35), 0 4px 6px -4px oklch(0.0 0 0 / 0.2);
+    --shadow-xl: 0 20px 25px -5px oklch(0.0 0 0 / 0.4), 0 8px 10px -6px oklch(0.0 0 0 / 0.25);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Base reset & styles                                               */
+  /* ---------------------------------------------------------------- */
+
+  *,
+  *::before,
+  *::after {
+    border-color: var(--color-border);
+  }
+
+  html {
+    font-family: var(--font-family-sans);
+    font-size: 16px;
+    line-height: var(--line-height-normal);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    color: var(--color-text-primary);
+    background-color: var(--color-bg-page);
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+  }
+
+  /* Improved focus visible styles */
+  :focus-visible {
+    outline: 2px solid var(--color-border-focus);
+    outline-offset: 2px;
+  }
+
+  /* Ensure minimum touch target size (WCAG 2.5.8) */
+  button,
+  [role="button"],
+  a,
+  input,
+  select,
+  textarea {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Reset button styles */
+  button {
+    cursor: pointer;
+    border: none;
+    background: none;
+    font: inherit;
+    color: inherit;
+    padding: 0;
+  }
+
+  /* Reduced motion preference */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

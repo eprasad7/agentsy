@@ -480,6 +480,7 @@ interface GuardrailsConfig {
   max_iterations?: number;     // Default: 10
   max_tokens?: number;         // Default: 50000
   timeout_ms?: number;         // Default: 300000 (5 min)
+  max_cost_usd?: number;       // Default: 1.00. Cost circuit breaker — kills run if estimated LLM spend exceeds threshold.
   max_tool_result_size?: number; // Default: 10240 (10KB)
   output_validation?: Array<{
     type: "no_pii" | "on_topic" | "content_policy" | "custom";
@@ -656,8 +657,13 @@ interface RunAgentRequest {
   version_id?: string;         // Optional. ver_... to pin a specific version (default: active deployment)
   environment?: string;        // Optional. "development" | "staging" | "production" (default: "production")
   stream?: boolean;            // Optional. Default: true. If false, returns synchronous JSON
+  async?: boolean;             // Optional. Default: false. If true, returns 202 Accepted immediately (see section 3.2). Mutually exclusive with stream.
   metadata?: Record<string, unknown>; // Optional. Custom metadata attached to the run
 }
+// Note: `stream` and `async` are mutually exclusive.
+// - stream: true (default) → SSE stream of events, connection held open until run completes
+// - stream: false → synchronous JSON response, connection held open until run completes
+// - async: true → 202 Accepted with run_id, poll via GET /v1/runs/:id or use webhook_url
 ```
 
 **Response (synchronous, `stream: false`): `200 OK`**
@@ -678,6 +684,7 @@ interface RunResult {
   duration_ms: number;
   model: string;
   trace_id: string;            // OTel trace ID
+  tool_mode?: "mock" | "dry-run" | "live"; // Present on eval runs to indicate tool execution mode
   metadata: Record<string, unknown>;
   started_at: string;          // ISO 8601
   completed_at: string;        // ISO 8601
@@ -919,8 +926,11 @@ GET /v1/runs
 | `environment` | string | Filter by environment: `development`, `staging`, `production` |
 | `created_after` | string | ISO 8601 timestamp |
 | `created_before` | string | ISO 8601 timestamp |
+| `version_id` | string | Filter by agent version ID |
+| `model` | string | Filter by model used (e.g., `claude-sonnet-4`) |
 | `min_cost_usd` | number | Filter runs costing at least this amount |
 | `max_cost_usd` | number | Filter runs costing at most this amount |
+| `sort_by` | string | Sort field: `created_at` (default), `duration_ms`, `total_cost_usd` |
 
 **Response: `200 OK`**
 
@@ -966,13 +976,15 @@ interface RunStep {
   tool_name: string | null;    // For tool_call steps
   input: string | null;        // Prompt or tool arguments (serialized JSON for tool calls)
   output: string | null;       // LLM response or tool result (serialized JSON for tool calls)
+  output_truncated: boolean;   // True when tool result exceeded max_tool_result_size and was truncated
   tokens_in: number;
   tokens_out: number;
   cost_usd: number;
   duration_ms: number | null;
   error: string | null;
-  approval_status?: "not_required" | "pending" | "approved" | "denied"; // For tool_call steps with write/admin risk_level
-  approved_by?: string | null; // user ID of approver (null if auto-approved or not required)
+  approval_status?: "pending" | "approved" | "denied"; // For tool_call steps with write/admin risk_level. Null for non-approval steps.
+  approved_by?: string | null; // user ID of approver (null if auto-approved or not applicable)
+  approval_wait_ms?: number | null; // Milliseconds the run was paused waiting for approval
   metadata: StepMetadata;
   started_at: string | null;   // ISO 8601
   completed_at: string | null; // ISO 8601
@@ -1124,6 +1136,11 @@ interface ApproveResponse {
 }
 ```
 
+**Error Responses:**
+- `409 Conflict` — Run is not in `awaiting_approval` status, or the specified step is not pending approval.
+- `403 Forbidden` — User lacks permission to approve tool calls for this agent/environment.
+- `404 Not Found` — Run or step does not exist.
+
 ### 3.7 Deny Pending Tool Call
 
 Denies a tool call that is awaiting approval. The agent continues without executing the tool.
@@ -1151,6 +1168,11 @@ interface DenyResponse {
   reason?: string;
 }
 ```
+
+**Error Responses:**
+- `409 Conflict` — Run is not in `awaiting_approval` status, or the specified step is not pending approval.
+- `403 Forbidden` — User lacks permission to deny tool calls for this agent/environment.
+- `404 Not Found` — Run or step does not exist.
 
 ---
 
@@ -1648,8 +1670,19 @@ POST /v1/knowledge-bases/:kb_id/documents
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `file` | file | Required. Supported formats: PDF, TXT, MD, CSV |
+| `file` | file | Required. The document to upload. |
 | `metadata` | string (JSON) | Optional. Custom metadata for all chunks from this document |
+
+**Supported file types:**
+
+| MIME Type | Extension | Max Size |
+|-----------|-----------|----------|
+| `application/pdf` | .pdf | 50 MB |
+| `text/plain` | .txt | 10 MB |
+| `text/markdown` | .md | 10 MB |
+| `text/csv` | .csv | 50 MB |
+
+Unsupported file types return `415 Unsupported Media Type`. Files exceeding the size limit return `413 Payload Too Large`.
 
 **Response: `202 Accepted`**
 
@@ -2310,8 +2343,10 @@ GET /v1/eval/experiments
 | `agent_id` | string | Filter by agent ID |
 | `dataset_id` | string | Filter by dataset ID |
 | `status` | string | Filter by status |
+| `version_id` | string | Filter by agent version ID |
 | `created_after` | string | ISO 8601 timestamp |
 | `created_before` | string | ISO 8601 timestamp |
+| `sort_by` | string | Sort field: `created_at` (default), `total_cost_usd` |
 
 **Response: `200 OK`**
 
@@ -3930,7 +3965,7 @@ Emitted when the run fails. This is the final event for failed runs.
 interface RunFailedEvent {
   run_id: string;              // run_...
   error: string;               // Error message
-  error_type: string;          // "timeout" | "max_iterations" | "max_tokens" | "tool_error" | "provider_error" | "internal_error"
+  error_type: string;          // "timeout" | "max_iterations" | "max_tokens" | "max_cost" | "guardrail_triggered" | "tool_error" | "provider_error" | "internal_error"
   total_tokens_in: number;
   total_tokens_out: number;
   total_cost_usd: number;      // Cost accrued before failure
@@ -4004,7 +4039,7 @@ POST /v1/webhooks
 ```typescript
 interface CreateWebhookRequest {
   url: string;                 // Required. HTTPS URL to receive webhook events.
-  events: string[];            // Required. Event types to subscribe to: "run.completed", "run.failed", "eval.completed"
+  events: string[];            // Required. Event types to subscribe to: "run.completed", "run.failed", "eval.completed", "approval.requested"
   description?: string;        // Optional. Human-readable description.
 }
 ```
@@ -4092,17 +4127,20 @@ interface RotateSecretResponse {
 
 ### Verification
 
+The `X-Agentsy-Signature` header contains a hex-encoded HMAC-SHA256 digest. The input to the HMAC is the **raw request body** (the exact UTF-8 bytes sent in the POST, not re-serialized or normalized JSON). The secret is the UTF-8 string returned at webhook creation.
+
 ```typescript
 import crypto from "crypto";
 
-function verifyWebhook(body: string, signature: string, secret: string): boolean {
+function verifyWebhook(rawBody: string, signature: string, secret: string): boolean {
+  // rawBody must be the raw HTTP request body string, NOT parsed and re-serialized JSON
   const expected = crypto
     .createHmac("sha256", secret)
-    .update(body)
+    .update(rawBody, "utf8")
     .digest("hex");
   return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expected)
+    Buffer.from(signature, "hex"),
+    Buffer.from(expected, "hex")
   );
 }
 ```
@@ -4194,7 +4232,7 @@ interface RunFailedWebhook {
   input: RunInput;
   output: RunOutput | null;    // Partial output if available
   error: string;               // Error message
-  error_type: "timeout" | "max_iterations" | "max_tokens" | "tool_error" | "provider_error" | "internal_error";
+  error_type: "timeout" | "max_iterations" | "max_tokens" | "max_cost" | "guardrail_triggered" | "tool_error" | "provider_error" | "internal_error";
   total_tokens_in: number;
   total_tokens_out: number;
   total_cost_usd: number;
