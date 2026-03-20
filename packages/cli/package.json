@@ -12,9 +12,17 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@agentsy/shared": "workspace:*",
     "@agentsy/sdk": "workspace:*",
-    "commander": "^14.0.3"
+    "@agentsy/shared": "workspace:*",
+    "@ai-sdk/anthropic": "^3.0.58",
+    "@ai-sdk/openai": "^3.0.41",
+    "ai": "^6.0.116",
+    "commander": "^14.0.3",
+    "dotenv": "^17.3.1",
+    "fastify": "^5.2.0",
+    "jiti": "^2.6.1",
+    "readline": "^1.3.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
