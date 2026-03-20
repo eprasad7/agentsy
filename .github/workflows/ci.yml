@@ -13,14 +13,16 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      # Opt into Node 24 for JS actions (checkout, etc.) before GH default flip — see GitHub changelog 2025-09-19
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
+      # Version comes from root package.json "packageManager" (pnpm@9.15.9) — do not duplicate here
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: pnpm
