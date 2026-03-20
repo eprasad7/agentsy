@@ -12,7 +12,9 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@agentsy/shared": "workspace:*"
+    "@agentsy/shared": "workspace:*",
+    "@agentsy/sdk": "workspace:*",
+    "commander": "^14.0.3"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
