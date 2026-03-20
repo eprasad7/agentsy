@@ -23,6 +23,13 @@ const cardVariants = cva(
   },
 );
 
+const cardBodyPadding = {
+  none: "",
+  sm: "p-3",
+  md: "p-4",
+  lg: "p-6",
+} as const;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -52,26 +59,33 @@ export interface CardProps
  * ```
  */
 export const Card = React.forwardRef<HTMLDivElement, CardProps>(
-  ({ className, padding, header, children, ...props }, ref) => (
-    <div
-      ref={ref}
-      className={cn(cardVariants({ padding: header ? "none" : padding }), className)}
-      {...props}
-    >
-      {header && (
-        <div className="border-b border-border px-4 py-3">
-          {header}
+  ({ className, padding = "md", header, children, ...props }, ref) => {
+    if (header) {
+      return (
+        <div
+          ref={ref}
+          className={cn(
+            "rounded-lg border border-border bg-surface-card shadow-sm",
+            className,
+          )}
+          {...props}
+        >
+          <div className="border-b border-border px-4 py-3">{header}</div>
+          <div className={cn(cardBodyPadding[padding ?? "md"])}>{children}</div>
         </div>
-      )}
-      {header ? (
-        <div className={cn(cardVariants({ padding }).replace(/rounded-lg border border-border bg-surface-card shadow-sm/g, ""))}>
-          {children}
-        </div>
-      ) : (
-        children
-      )}
-    </div>
-  ),
+      );
+    }
+
+    return (
+      <div
+        ref={ref}
+        className={cn(cardVariants({ padding }), className)}
+        {...props}
+      >
+        {children}
+      </div>
+    );
+  },
 );
 
 Card.displayName = "Card";
