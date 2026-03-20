@@ -1,3 +1,4 @@
+import type { ResponseOutputConfig } from '@agentsy/shared';
 import { index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 
 import { agents } from './agents';
@@ -62,6 +63,7 @@ export const agentVersions = pgTable(
       .notNull()
       .default({}),
     modelParams: jsonb('model_params').$type<VersionModelParams>().default({}),
+    outputConfig: jsonb('output_config').$type<ResponseOutputConfig>().notNull().default({ mode: 'text' }),
     description: text('description'),
     createdBy: varchar('created_by', { length: 255 }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

@@ -11,6 +11,7 @@ export interface AgentVersionConfig {
   toolsConfig: unknown[];
   guardrailsConfig: Record<string, unknown>;
   modelParams: Record<string, unknown>;
+  outputConfig: { mode: 'text' | 'json'; json_schema?: Record<string, unknown>; strict?: boolean };
 }
 
 let db: ReturnType<typeof createPgClient> | undefined;
@@ -48,5 +49,6 @@ export async function loadAgentConfig(versionId: string): Promise<AgentVersionCo
     toolsConfig: (row.toolsConfig ?? []) as unknown[],
     guardrailsConfig: (row.guardrailsConfig ?? {}) as Record<string, unknown>,
     modelParams: (row.modelParams ?? {}) as Record<string, unknown>,
+    outputConfig: (row.outputConfig ?? { mode: 'text' }) as { mode: 'text' | 'json'; json_schema?: Record<string, unknown>; strict?: boolean },
   };
 }

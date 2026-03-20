@@ -15,6 +15,7 @@ export interface LlmCallInput {
     topP?: number;
     maxOutputTokens?: number;
   };
+  outputMode?: 'text' | 'json';
   // Streaming context
   runId?: string;
   stepId?: string;
@@ -67,9 +68,14 @@ export async function llmCall(input: LlmCallInput): Promise<LlmCallResult> {
 
   const result = await callWithFallback(
     async (model) => {
+      // Append JSON mode instruction to system prompt when outputMode is 'json'
+      const systemPrompt = input.outputMode === 'json'
+        ? `${input.systemPrompt}\n\nIMPORTANT: You MUST respond with valid JSON only. No additional text before or after the JSON.`
+        : input.systemPrompt;
+
       const opts: Record<string, unknown> = {
         model,
-        system: input.systemPrompt,
+        system: systemPrompt,
         messages,
         temperature: input.modelParams?.temperature,
         topP: input.modelParams?.topP,

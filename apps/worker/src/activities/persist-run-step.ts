@@ -18,6 +18,8 @@ export interface PersistRunStepInput {
   error?: string;
   outputTruncated?: boolean;
   approvalStatus?: 'pending' | 'approved' | 'denied';
+  parsedOutput?: unknown;
+  outputValidation?: { ok: boolean; errors?: Array<{ path: string; message: string }> };
   metadata?: Record<string, unknown>;
 }
 
@@ -56,6 +58,8 @@ export async function persistRunStep(input: PersistRunStepInput): Promise<string
     error: input.error ?? null,
     outputTruncated: input.outputTruncated ?? false,
     approvalStatus: input.approvalStatus ?? null,
+    parsedOutput: input.parsedOutput ?? null,
+    outputValidation: input.outputValidation ?? null,
     metadata: input.metadata ?? {},
     startedAt: now,
     completedAt: now,

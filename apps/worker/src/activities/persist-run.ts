@@ -11,6 +11,8 @@ export interface PersistRunInput {
   totalTokensOut?: number;
   totalCostUsd?: number;
   durationMs?: number;
+  outputValid?: boolean | null;
+  outputValidation?: { ok: boolean; errors?: Array<{ path: string; message: string }> } | null;
   metadata?: Record<string, unknown>;
 }
 
@@ -43,6 +45,8 @@ export async function persistRun(input: PersistRunInput): Promise<void> {
   if (input.totalTokensOut !== undefined) updates['totalTokensOut'] = input.totalTokensOut;
   if (input.totalCostUsd !== undefined) updates['totalCostUsd'] = input.totalCostUsd;
   if (input.durationMs !== undefined) updates['durationMs'] = input.durationMs;
+  if (input.outputValid !== undefined) updates['outputValid'] = input.outputValid;
+  if (input.outputValidation !== undefined) updates['outputValidation'] = input.outputValidation;
 
   if (['completed', 'failed', 'cancelled', 'timeout'].includes(input.status)) {
     updates['completedAt'] = now;

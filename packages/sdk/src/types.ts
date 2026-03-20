@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 
 // Re-export shared types that are part of the SDK's public API
-export type { RunInput, RunOutput, ModelParams } from '@agentsy/shared';
+export type { RunInput, RunOutput, ModelParams, ResponseOutputConfig } from '@agentsy/shared';
 
 // ── Model Types ─────────────────────────────────────────────────────
 
@@ -190,6 +190,7 @@ export interface AgentConfig {
   guardrails?: GuardrailsConfig;
   memory?: MemoryConfig;
   modelParams?: import('@agentsy/shared').ModelParams;
+  output?: import('@agentsy/shared').ResponseOutputConfig;
   codeExecution?: CodeExecutionConfig;
 }
 

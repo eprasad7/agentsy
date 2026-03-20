@@ -146,6 +146,23 @@ export const modelParamsSchema = z.object({
   stopSequences: z.array(z.string()).optional(),
 }).optional();
 
+// ── Response Output Config ──────────────────────────────────────────
+
+export const responseOutputConfigSchema = z.object({
+  mode: z.enum(['text', 'json']),
+  json_schema: z.record(z.string(), z.unknown()).optional(),
+  strict: z.boolean().optional(),
+  schema_version: z.string().optional(),
+}).optional().refine(
+  (val) => {
+    if (!val) return true;
+    // json_schema only valid when mode === 'json'
+    if (val.json_schema && val.mode !== 'json') return false;
+    return true;
+  },
+  { message: 'json_schema can only be set when mode is "json"' },
+);
+
 // ── Agent Config ────────────────────────────────────────────────────
 
 export const agentConfigSchema = z.object({
@@ -159,6 +176,7 @@ export const agentConfigSchema = z.object({
   guardrails: guardrailsConfigSchema,
   memory: memoryConfigSchema,
   modelParams: modelParamsSchema,
+  output: responseOutputConfigSchema,
   codeExecution: z.object({
     enabled: z.boolean(),
     defaultLanguage: z.enum(['python', 'javascript', 'typescript']).optional(),

@@ -1,3 +1,4 @@
+import type { OutputValidationResult } from '@agentsy/shared';
 import {
   boolean,
   doublePrecision,
@@ -49,6 +50,8 @@ export const runSteps = pgTable(
     approvalResolvedBy: varchar('approval_resolved_by', { length: 255 }),
     approvalResolvedAt: timestamp('approval_resolved_at', { withTimezone: true }),
     approvalWaitStartedAt: timestamp('approval_wait_started_at', { withTimezone: true }),
+    parsedOutput: jsonb('parsed_output'),
+    outputValidation: jsonb('output_validation').$type<OutputValidationResult>(),
     metadata: jsonb('metadata').$type<RunStepMetadata>().default({}),
     startedAt: timestamp('started_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),

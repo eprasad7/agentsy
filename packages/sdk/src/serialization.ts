@@ -38,6 +38,7 @@ export function serializeAgentConfig(config: Readonly<AgentConfig>): {
   toolsConfig: SerializedToolConfig[];
   guardrailsConfig: SerializedGuardrailsConfig;
   modelParams: SerializedModelParams;
+  outputConfig: SerializedOutputConfig;
 } {
   const systemPrompt = typeof config.systemPrompt === 'string'
     ? config.systemPrompt
@@ -92,7 +93,9 @@ export function serializeAgentConfig(config: Readonly<AgentConfig>): {
 
   const modelParams: SerializedModelParams = config.modelParams ?? {};
 
-  return { systemPrompt, model, modelSpec, fallbackModel, toolsConfig, guardrailsConfig, modelParams };
+  const outputConfig: SerializedOutputConfig = config.output ?? { mode: 'text' };
+
+  return { systemPrompt, model, modelSpec, fallbackModel, toolsConfig, guardrailsConfig, modelParams, outputConfig };
 }
 
 // ── Serialized types (JSON-safe, no functions/Zod) ──────────────────
@@ -132,4 +135,11 @@ export interface SerializedModelParams {
   topP?: number;
   maxOutputTokens?: number;
   stopSequences?: string[];
+}
+
+export interface SerializedOutputConfig {
+  mode: 'text' | 'json';
+  json_schema?: Record<string, unknown>;
+  strict?: boolean;
+  schema_version?: string;
 }

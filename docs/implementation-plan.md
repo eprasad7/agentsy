@@ -23,7 +23,7 @@
 | 3 | Streaming & API | Milestone 1-2 | 3-4 days |
 | 3.5 | Design Tokens & Retroactive UI | Milestone 2 | 3-4 days |
 | 4 | Eval Engine | Milestone 3 | 5-7 days |
-| 4.5 | Agent Response Contract | Milestone 3 | 3-5 days |
+| 4.5 | Agent Response Contract | Milestone 3 | 5-8 days |
 | 5 | Memory & Knowledge Base | Milestone 4 | 4-5 days |
 | 6 | Tool System & MCP | Milestone 4 | 3-4 days |
 | 6b | Connector Catalog | Milestone 4 | 5-7 days |
@@ -951,11 +951,12 @@ Files to create:
 
 ## Phase 4.5: Agent Response Contract (Journeys 3, 4, 7)
 
-**Brief**: `docs/phase-4-5-brief.md`
+**Brief**: `docs/phase-4-5-brief.md` (includes **strict policy**, **migration scope across `agent_versions` + `runs` + `run_steps`**, **backward compat**, **phase ordering rationale**, **worker risks**).
 
 ### Prerequisites
 - Phase 2 complete (agent runtime, `agent_versions` on deploy)
 - Phase 3 complete (runs, SSE streaming, client SDK)
+- Phase 4 **not** a hard prerequisite; eval default-schema integration is optional follow-on within the same phase if Phase 4 has landed
 
 ### Steps
 
@@ -973,10 +974,10 @@ Files to touch:
 
 #### 4.5.2 Database migration
 
-**What**: Add `output_config` (jsonb, default empty / text mode) to `agent_versions`. Optional: `parsed_output`, `output_validation` on `run_steps` or equivalent JSONB on final assistant step per existing step schema.
+**What**: **One migration file**, **multiple tables** (see `docs/phase-4-5-brief.md` § Migration scope): `agent_versions.output_config` (NOT NULL + default `{ "mode": "text" }`); `runs.output_valid` (nullable boolean), `runs.output_validation` (nullable jsonb) — **dedicated columns on `runs`**, not only `metadata` (queryability for dashboards/alerts); `run_steps.parsed_output` + `run_steps.output_validation` where needed for final assistant / LLM steps. Read-time: `NULL` `output_config` on legacy rows → `{ mode: "text" }`. Add supporting **index** for `output_valid = false` queries per brief.
 **Spec reference**: spec-data-model.md.
 **Journey**: J3 (local SQLite parity column or documented dev fallback).
-**Acceptance criteria**: Migration applied; RLS unchanged; backward compatible (existing versions → default text mode).
+**Acceptance criteria**: Migration applied; RLS unchanged; backward compatible; existing agent versions and runs behave as text / legacy.
 
 Files to create/change:
 - `packages/db/src/schema/*.ts` -- column(s)
@@ -990,10 +991,10 @@ Files to create/change:
 
 #### 4.5.4 Worker: parse, validate, enforce strict
 
-**What**: Load config per run; for `json` mode, set provider parameters for JSON/structured output where supported; on final assistant message, parse and validate with Ajv or existing stack; write metadata to steps/run.
-**Spec reference**: architecture-v1.md streaming; technology-decisions.md LLM providers.
+**What**: Time-box **spike (0.5–1 day)** on Anthropic + OpenAI + Vercel AI SDK for structured JSON; then implement a single internal completion path for JSON mode. Load config per run; for `json` mode, set provider parameters where supported; on final assistant message, parse and validate with Ajv or existing stack; write `run_steps` + **`runs`**: **`strict: true`** → `status = failed`; **`strict: false`** → `status = completed`, `output_valid = false`, `output_validation` populated (per brief — no new `run_status` enum value).
+**Spec reference**: architecture-v1.md streaming; technology-decisions.md LLM providers; `docs/phase-4-5-brief.md` § Strict policy.
 **Journey**: J4 (evals see stable machine-readable output).
-**Acceptance criteria**: `strict: true` invalid output yields documented run status/error; `strict: false` persists validation error without silent pass.
+**Acceptance criteria**: Both strict paths match spec; eval grader treats `output_valid === false` as failing score for structured criterion.
 
 Files to touch:
 - `apps/worker/src/activities/*` -- agent run / LLM completion path

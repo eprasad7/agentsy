@@ -31,6 +31,8 @@ export interface RunResponse {
   duration_ms: number | null;
   model: string | null;
   trace_id: string | null;
+  output_valid: boolean | null;
+  output_validation: Record<string, unknown> | null;
   metadata: Record<string, unknown>;
   started_at: string | null;
   completed_at: string | null;

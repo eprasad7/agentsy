@@ -67,6 +67,20 @@ export type OutputValidation =
   | { type: 'json_schema'; config: { schema: Record<string, unknown> } }
   | { type: 'custom'; config: { name: string; prompt: string } };
 
+// ── Response Output Contract ─────────────────────────────────────────
+
+export interface ResponseOutputConfig {
+  mode: 'text' | 'json';
+  json_schema?: Record<string, unknown>;
+  strict?: boolean;
+  schema_version?: string;
+}
+
+export interface OutputValidationResult {
+  ok: boolean;
+  errors?: Array<{ path: string; message: string }>;
+}
+
 // ── JSONB Column Types ───────────────────────────────────────────────
 
 export interface ToolsConfig {

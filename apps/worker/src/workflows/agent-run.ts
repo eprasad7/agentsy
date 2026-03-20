@@ -109,7 +109,13 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
   const maxCostUsd = guardrails.maxCostUsd ?? 1.0;
   const timeoutMs = guardrails.timeoutMs ?? 300_000;
 
-  // 6. Build tools map
+  // 6. Output config (response contract)
+  const outputConfig = (config.outputConfig ?? { mode: 'text' }) as {
+    mode: 'text' | 'json'; json_schema?: Record<string, unknown>; strict?: boolean;
+  };
+  const isJsonMode = outputConfig.mode === 'json';
+
+  // 7. Build tools map
   const toolsConfig = (config.toolsConfig ?? []) as Array<{
     name: string; type: string; description?: string; inputSchema?: Record<string, unknown>;
     riskLevel?: string; timeout?: number; approvalPolicy?: Record<string, unknown>;
@@ -157,6 +163,7 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
       messages: messages as Array<{ role: 'user' | 'assistant' | 'tool'; content: string }>,
       tools: Object.keys(aiTools).length > 0 ? aiTools as Record<string, never> : undefined,
       modelParams: config.modelParams as Record<string, unknown>,
+      outputMode: isJsonMode ? 'json' : 'text',
       runId,
       stepId: llmStepId,
     });
@@ -184,7 +191,7 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
 
     // No tool calls → final response
     if (llmResult.toolCalls.length === 0) {
-      // Run output validators
+      // Run output validators (guardrails)
       const validationResult = await activities.validateOutput({
         output: llmResult.text, validators: guardrails.outputValidation,
       });
@@ -205,8 +212,53 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
           metadata: { guardrail_triggered: 'output_validation', violations: validationResult.violations },
         });
       } else {
+        // JSON mode: parse + validate against schema
+        let outputValid: boolean | null = null;
+        let outputValidation: { ok: boolean; errors?: Array<{ path: string; message: string }> } | null = null;
+        let parsedOutput: unknown = null;
+
+        if (isJsonMode) {
+          const jsonResult = validateJsonOutput(llmResult.text, outputConfig.json_schema);
+          outputValid = jsonResult.ok;
+          outputValidation = jsonResult;
+          parsedOutput = jsonResult.parsed;
+
+          if (!jsonResult.ok && outputConfig.strict) {
+            // strict: true → fail the run
+            const errorMsg = `JSON output validation failed: ${(jsonResult.errors ?? []).map((e) => e.message).join('; ')}`;
+            await activities.emitRunEvent(runId, {
+              type: 'run.failed', run_id: runId, error: errorMsg,
+              error_type: 'output_validation_failed',
+              total_tokens_in: totalTokensIn, total_tokens_out: totalTokensOut,
+              total_cost_usd: totalCost, duration_ms: Date.now() - startedAt, failed_step_id: null,
+            });
+            await activities.persistRun({
+              runId, status: 'failed', error: errorMsg,
+              output: { type: 'text', text: llmResult.text },
+              totalTokensIn, totalTokensOut, totalCostUsd: totalCost,
+              durationMs: Date.now() - startedAt, model: resolvedModel,
+              outputValid: false, outputValidation: jsonResult,
+            });
+            await activities.cleanupRunEvents(runId);
+
+            if (input.sessionId) {
+              await activities.persistMessages({
+                sessionId: input.sessionId, orgId, runId,
+                userMessage: userInputText, agentMessage: llmResult.text,
+              });
+            }
+            return;
+          }
+        }
+
+        // Build output based on mode
+        const runOutput = isJsonMode && parsedOutput !== null
+          ? { type: 'structured' as const, data: parsedOutput as Record<string, unknown> }
+          : { type: 'text' as const, text: llmResult.text };
+
         await completeRun(runId, llmResult.text, resolvedModel, {
           totalTokensIn, totalTokensOut, totalCost, startedAt,
+          outputValid, outputValidation, runOutput,
         });
       }
 
@@ -364,19 +416,119 @@ async function emitGuardrailViolation(
 
 async function completeRun(
   runId: string, text: string, model: string,
-  state: { totalTokensIn: number; totalTokensOut: number; totalCost: number; startedAt: number; metadata?: Record<string, unknown> },
+  state: {
+    totalTokensIn: number; totalTokensOut: number; totalCost: number; startedAt: number;
+    metadata?: Record<string, unknown>;
+    outputValid?: boolean | null;
+    outputValidation?: { ok: boolean; errors?: Array<{ path: string; message: string }> } | null;
+    runOutput?: { type: 'text'; text: string } | { type: 'structured'; data: Record<string, unknown> };
+  },
 ) {
+  const output = state.runOutput ?? { type: 'text' as const, text };
+
   await activities.emitRunEvent(runId, {
-    type: 'run.completed', run_id: runId, output: { type: 'text', text },
+    type: 'run.completed', run_id: runId, output,
     total_tokens_in: state.totalTokensIn, total_tokens_out: state.totalTokensOut,
     total_cost_usd: state.totalCost, duration_ms: Date.now() - state.startedAt, trace_id: null,
   });
   await activities.persistRun({
-    runId, status: 'completed', output: { type: 'text', text },
+    runId, status: 'completed', output,
     totalTokensIn: state.totalTokensIn, totalTokensOut: state.totalTokensOut,
     totalCostUsd: state.totalCost, durationMs: Date.now() - state.startedAt, model,
+    outputValid: state.outputValid ?? null,
+    outputValidation: state.outputValidation ?? null,
     metadata: state.metadata,
   });
+}
+
+function validateJsonOutput(
+  text: string,
+  schema?: Record<string, unknown>,
+): { ok: boolean; parsed?: unknown; errors?: Array<{ path: string; message: string }> } {
+  // Step 1: Parse JSON
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    return {
+      ok: false,
+      errors: [{ path: '', message: `Invalid JSON: ${err instanceof Error ? err.message : 'parse error'}` }],
+    };
+  }
+
+  // Step 2: Validate against schema (if provided)
+  if (schema) {
+    const errors = validateAgainstSchema(parsed, schema, '');
+    if (errors.length > 0) {
+      return { ok: false, parsed, errors };
+    }
+  }
+
+  return { ok: true, parsed };
+}
+
+function validateAgainstSchema(
+  value: unknown, schema: Record<string, unknown>, path: string,
+): Array<{ path: string; message: string }> {
+  const errors: Array<{ path: string; message: string }> = [];
+  const type = schema['type'] as string | undefined;
+
+  if (type) {
+    const actualType = getJsonType(value);
+    if (type === 'integer') {
+      if (typeof value !== 'number' || !Number.isInteger(value)) {
+        errors.push({ path: path || '$', message: `expected integer, got ${actualType}` });
+        return errors;
+      }
+    } else if (actualType !== type) {
+      errors.push({ path: path || '$', message: `expected ${type}, got ${actualType}` });
+      return errors;
+    }
+  }
+
+  if (type === 'object' || (!type && typeof value === 'object' && value !== null && !Array.isArray(value))) {
+    const obj = value as Record<string, unknown>;
+    const properties = schema['properties'] as Record<string, Record<string, unknown>> | undefined;
+    const required = schema['required'] as string[] | undefined;
+
+    if (required) {
+      for (const key of required) {
+        if (!(key in obj)) {
+          errors.push({ path: `${path}.${key}`, message: `missing required property "${key}"` });
+        }
+      }
+    }
+
+    if (properties) {
+      for (const [key, propSchema] of Object.entries(properties)) {
+        if (key in obj) {
+          errors.push(...validateAgainstSchema(obj[key], propSchema, `${path}.${key}`));
+        }
+      }
+    }
+  }
+
+  if (type === 'array' && Array.isArray(value)) {
+    const items = schema['items'] as Record<string, unknown> | undefined;
+    if (items) {
+      for (let i = 0; i < value.length; i++) {
+        errors.push(...validateAgainstSchema(value[i], items, `${path}[${i}]`));
+      }
+    }
+  }
+
+  const enumValues = schema['enum'] as unknown[] | undefined;
+  if (enumValues && !enumValues.includes(value)) {
+    errors.push({ path: path || '$', message: `value not in enum` });
+  }
+
+  return errors;
+}
+
+function getJsonType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
 }
 
 function checkApproval(

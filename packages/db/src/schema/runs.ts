@@ -1,5 +1,6 @@
-import type { RunInput, RunOutput } from '@agentsy/shared';
+import type { RunInput, RunOutput, OutputValidationResult } from '@agentsy/shared';
 import {
+  boolean,
   doublePrecision,
   index,
   integer,
@@ -56,6 +57,8 @@ export const runs = pgTable(
     model: varchar('model', { length: 100 }),
     temporalWorkflowId: varchar('temporal_workflow_id', { length: 255 }),
     traceId: varchar('trace_id', { length: 64 }),
+    outputValid: boolean('output_valid'),
+    outputValidation: jsonb('output_validation').$type<OutputValidationResult>(),
     metadata: jsonb('metadata').$type<RunMetadata>().default({}),
     startedAt: timestamp('started_at', { withTimezone: true }),
     completedAt: timestamp('completed_at', { withTimezone: true }),

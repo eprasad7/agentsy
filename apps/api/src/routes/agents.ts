@@ -212,6 +212,12 @@ const createVersionSchema = z.object({
   tools_config: z.array(z.record(z.string(), z.unknown())).optional().default([]),
   guardrails_config: z.record(z.string(), z.unknown()).optional().default({}),
   model_params: z.record(z.string(), z.unknown()).optional().default({}),
+  output_config: z.object({
+    mode: z.enum(['text', 'json']),
+    json_schema: z.record(z.string(), z.unknown()).optional(),
+    strict: z.boolean().optional(),
+    schema_version: z.string().optional(),
+  }).optional().default({ mode: 'text' }),
   description: z.string().max(2000).optional(),
 });
 
@@ -227,6 +233,7 @@ function formatVersion(v: {
   toolsConfig: unknown;
   guardrailsConfig: unknown;
   modelParams: unknown;
+  outputConfig: unknown;
   description: string | null;
   createdBy: string | null;
   createdAt: Date;
@@ -243,6 +250,7 @@ function formatVersion(v: {
     tools_config: v.toolsConfig,
     guardrails_config: v.guardrailsConfig,
     model_params: v.modelParams,
+    output_config: v.outputConfig ?? { mode: 'text' },
     description: v.description,
     created_by: v.createdBy,
     created_at: v.createdAt.toISOString(),
@@ -347,6 +355,7 @@ export function agentVersionRoutes(app: FastifyInstance, db: DbClient): void {
         toolsConfig: body.tools_config as VersionToolsConfig,
         guardrailsConfig: body.guardrails_config as VersionGuardrailsConfig,
         modelParams: body.model_params as VersionModelParams,
+        outputConfig: body.output_config,
         description: body.description ?? null,
         createdBy: request.userId ?? null,
       })
