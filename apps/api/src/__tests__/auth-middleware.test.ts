@@ -1,7 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
-
 import { apiKeys } from '@agentsy/db';
-import { newId } from '@agentsy/shared';
 import { eq } from 'drizzle-orm';
 import Fastify from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';

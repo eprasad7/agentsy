@@ -2,7 +2,6 @@ import { tenantSecrets } from '@agentsy/db';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { decrypt } from '../lib/crypto.js';
 import { createSecret, deleteSecret, getSecretValue, listSecrets, updateSecret } from '../services/secrets.js';
 
 import { cleanOrgData, createTestDb, seedTestOrg, type TestDb } from './helpers.js';

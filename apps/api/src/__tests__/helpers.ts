@@ -9,7 +9,7 @@ import {
   tenantSecrets,
 } from '@agentsy/db';
 import { newId } from '@agentsy/shared';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 

@@ -3,18 +3,18 @@ import Fastify from 'fastify';
 import { createAuth } from './lib/auth.js';
 import { createDb } from './lib/db.js';
 import { registerAuthMiddleware } from './middleware/auth.js';
+import { checkConcurrentRunLimit } from './middleware/concurrent-run-limiter.js';
 import { registerIdempotencyMiddleware } from './middleware/idempotency.js';
 import { registerRateLimitMiddleware } from './middleware/rate-limit.js';
 import { registerRlsMiddleware } from './middleware/rls.js';
-import { checkConcurrentRunLimit } from './middleware/concurrent-run-limiter.js';
 import { registerCors } from './plugins/cors.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerRequestLogger } from './plugins/request-logger.js';
 import { apiKeyRoutes } from './routes/api-keys.js';
 import { environmentRoutes } from './routes/environments.js';
 import { healthRoutes } from './routes/health.js';
-import { organizationRoutes, memberRoutes } from './routes/organizations.js';
 import { onboardingRoutes } from './routes/onboarding.js';
+import { organizationRoutes, memberRoutes } from './routes/organizations.js';
 import { secretRoutes } from './routes/secrets.js';
 
 const app = Fastify({

@@ -7,10 +7,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { cleanOrgData, createTestDb, seedTestOrg, type TestDb } from './helpers.js';
 
-// Superuser for seeding data (bypasses RLS)
-const ADMIN_DB_URL =
-  process.env['DATABASE_URL'] ?? 'postgresql://agentsy:agentsy_local@localhost:5432/agentsy_test';
-
 // Non-superuser for RLS testing (subject to RLS policies)
 const APP_DB_URL =
   process.env['RLS_DATABASE_URL'] ?? 'postgresql://agentsy_app:agentsy_app_local@localhost:5432/agentsy_test';

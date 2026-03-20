@@ -23,7 +23,7 @@ describe('API Keys Lifecycle (integration)', () => {
   });
 
   it('generates and stores a new API key', async () => {
-    const { fullKey, prefix, keyHash } = generateApiKey(orgData.slug);
+    const { prefix, keyHash } = generateApiKey(orgData.slug);
     const id = newId('key');
 
     await db.insert(apiKeys).values({
