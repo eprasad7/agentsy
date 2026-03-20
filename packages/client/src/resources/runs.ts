@@ -33,14 +33,23 @@ export class RunsResource {
     const timeout = opts?.timeoutMs ?? 300_000;
     const interval = opts?.intervalMs ?? 1_000;
     const start = Date.now();
+    const terminalStatuses = ['completed', 'failed', 'cancelled', 'timeout'];
+
+    // Check immediately first (no sleep before first check)
+    const initial = await this.get(runId);
+    if (terminalStatuses.includes(initial.status)) return initial;
 
     while (Date.now() - start < timeout) {
+      await new Promise((r) => setTimeout(r, interval));
       const run = await this.get(runId);
-      if (['completed', 'failed', 'cancelled', 'timeout'].includes(run.status)) {
+      if (terminalStatuses.includes(run.status)) {
         return run;
       }
-      await new Promise((r) => setTimeout(r, interval));
     }
+
+    // One final check after timeout (handles race where run completes during last sleep)
+    const final = await this.get(runId);
+    if (terminalStatuses.includes(final.status)) return final;
 
     throw new Error(`Run ${runId} did not complete within ${timeout}ms`);
   }

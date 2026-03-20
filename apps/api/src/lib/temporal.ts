@@ -1,21 +1,19 @@
 import { Client, Connection } from '@temporalio/client';
 
 let cachedClient: Client | null = null;
+let initPromise: Promise<Client | null> | null = null;
 
+/**
+ * Get the Temporal client. Returns the cached client if initialized,
+ * otherwise returns null. Call initTemporalClient() at startup.
+ */
 export function getTemporalClient(): Client | null {
-  if (cachedClient) return cachedClient;
-
-  const address = process.env['TEMPORAL_ADDRESS'];
-  if (!address) return null;
-
-  // Client will be initialized lazily on first use
-  return null;
+  return cachedClient;
 }
-
-let initPromise: Promise<Client> | null = null;
 
 /**
  * Initialize the Temporal client connection. Call once at startup.
+ * Sets the cached client that getTemporalClient() returns.
  */
 export async function initTemporalClient(): Promise<Client | null> {
   const address = process.env['TEMPORAL_ADDRESS'];

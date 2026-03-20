@@ -70,6 +70,7 @@ export function serializeAgentConfig(config: Readonly<AgentConfig>): {
       description: tool.description,
       mcpServerUrl: tool.serverUrl,
       mcpTransport: tool.transport,
+      headers: tool.headers,
       timeout: tool.timeout,
       riskLevel: tool.riskLevel ?? 'read',
     };
@@ -103,6 +104,7 @@ export interface SerializedToolConfig {
   inputSchema?: Record<string, unknown>;
   mcpServerUrl?: string;
   mcpTransport?: 'stdio' | 'streamable-http';
+  headers?: Record<string, string>;
   timeout?: number;
   riskLevel: 'read' | 'write' | 'admin';
   approvalPolicy?: {

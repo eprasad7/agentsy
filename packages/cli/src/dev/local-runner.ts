@@ -14,6 +14,8 @@ export interface RunResult {
   costUsd: number;
   durationMs: number;
   steps: RunStep[];
+  guardrail_triggered?: string;
+  violations?: string[];
 }
 
 export interface RunStep {
@@ -192,13 +194,25 @@ export async function runAgent(config: AgentConfig, input: string): Promise<RunR
     steps.push({ type: 'llm_call', model, tokensIn, tokensOut, costUsd: cost });
 
     if (!result.toolCalls?.length) {
+      const outputText = result.text ?? '';
+
+      // Run output validators (same as Temporal workflow)
+      const violations = runLocalOutputValidation(
+        outputText,
+        config.guardrails?.outputValidation as Array<{ type: string; config?: Record<string, unknown> }> | undefined,
+      );
+      if (violations.length > 0) {
+        console.warn(`\n  ⚠ Output validation: ${violations.join('; ')}`);
+      }
+
       return {
-        output: result.text ?? '',
+        output: outputText,
         tokensIn: totalTokensIn,
         tokensOut: totalTokensOut,
         costUsd: totalCost,
         durationMs: Date.now() - startTime,
         steps,
+        ...(violations.length > 0 ? { guardrail_triggered: 'output_validation', violations } : {}),
       };
     }
 
@@ -267,4 +281,57 @@ function createAiModel(model: string) {
   }
   const openai = createOpenAI({});
   return openai(model);
+}
+
+// ── PII patterns (same as worker guardrails) ────────────────────────
+
+const PII_PATTERNS: Record<string, RegExp> = {
+  ssn: /\b\d{3}-\d{2}-\d{4}\b/g,
+  credit_card: /\b(?:\d{4}[- ]?){3}\d{4}\b/g,
+  email: /\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b/g,
+  phone: /\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}\b/g,
+};
+
+/**
+ * Run output validators locally — mirrors the worker's output-validators.ts
+ */
+function runLocalOutputValidation(
+  output: string,
+  validators?: Array<{ type: string; config?: Record<string, unknown> }>,
+): string[] {
+  if (!validators?.length) return [];
+  const violations: string[] = [];
+
+  for (const v of validators) {
+    switch (v.type) {
+      case 'no_pii': {
+        const found: string[] = [];
+        for (const [category, pattern] of Object.entries(PII_PATTERNS)) {
+          if (pattern.test(output)) found.push(category);
+          pattern.lastIndex = 0;
+        }
+        if (found.length) violations.push(`PII detected: ${found.join(', ')}`);
+        break;
+      }
+      case 'on_topic': {
+        const topics = (v.config?.['topics'] as string[]) ?? [];
+        if (topics.length > 0) {
+          const lower = output.toLowerCase();
+          if (!topics.some((t) => lower.includes(t.toLowerCase()))) {
+            violations.push(`Off-topic. Expected: ${topics.join(', ')}`);
+          }
+        }
+        break;
+      }
+      case 'content_policy': {
+        const blocked = (v.config?.['blockedCategories'] as string[]) ?? ['harmful', 'illegal', 'sexual'];
+        const lower = output.toLowerCase();
+        const found = blocked.filter((b) => lower.includes(b.toLowerCase()));
+        if (found.length) violations.push(`Blocked content: ${found.join(', ')}`);
+        break;
+      }
+    }
+  }
+
+  return violations;
 }

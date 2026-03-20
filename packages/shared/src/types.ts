@@ -80,7 +80,7 @@ export interface ToolsConfig {
   mcp: Array<{
     name: string;
     serverUrl: string;
-    transport: 'stdio' | 'sse';
+    transport: 'stdio' | 'streamable-http';
     tools?: string[];
     env?: Record<string, string>;
   }>;

@@ -67,7 +67,7 @@ export interface StepCompletedEvent {
   type: 'step.completed';
   step_id: string;
   step_order: number;
-  step_type: 'llm_call' | 'tool_call' | 'retrieval' | 'guardrail';
+  step_type: 'llm_call' | 'tool_call' | 'retrieval' | 'guardrail' | 'approval_request';
   tokens_in: number;
   tokens_out: number;
   cost_usd: number;
