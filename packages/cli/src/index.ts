@@ -1,6 +1,8 @@
 import { Command } from 'commander';
 
 import { registerDevCommand } from './commands/dev.js';
+import { registerEvalCompareCommand } from './commands/eval-compare.js';
+import { registerEvalRunCommand } from './commands/eval-run.js';
 import { registerInitCommand } from './commands/init.js';
 
 const program = new Command();
@@ -12,5 +14,7 @@ program
 
 registerInitCommand(program);
 registerDevCommand(program);
+registerEvalRunCommand(program);
+registerEvalCompareCommand(program);
 
 program.parse();

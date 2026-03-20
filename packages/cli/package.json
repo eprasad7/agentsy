@@ -12,6 +12,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@agentsy/client": "workspace:*",
+    "@agentsy/eval": "workspace:*",
     "@agentsy/sdk": "workspace:*",
     "@agentsy/shared": "workspace:*",
     "@ai-sdk/anthropic": "^3.0.58",
