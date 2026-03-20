@@ -9,7 +9,7 @@ import {
 } from '@agentsy/db';
 import { newId } from '@agentsy/shared';
 import type { RunInput } from '@agentsy/shared';
-import { eq, and, isNull, desc, lt, gt } from 'drizzle-orm';
+import { eq, and, isNull, desc, lt, gt, gte, lte } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
@@ -39,12 +39,29 @@ const createRunSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
-const paginationSchema = z.object({
+const listRunsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(20),
   cursor: z.string().optional(),
   order: z.enum(['asc', 'desc']).optional().default('desc'),
   agent_id: z.string().optional(),
   status: z.string().optional(),
+  environment: z.string().optional(),
+  created_after: z.string().datetime().optional(),
+  created_before: z.string().datetime().optional(),
+});
+
+const listStepsSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+  cursor: z.string().optional(),
+});
+
+const approveSchema = z.object({
+  step_id: z.string().optional(),
+});
+
+const denySchema = z.object({
+  step_id: z.string().optional(),
+  reason: z.string().optional(),
 });
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -90,6 +107,12 @@ function formatRun(r: typeof runs.$inferSelect) {
 }
 
 function formatStep(s: typeof runSteps.$inferSelect) {
+  // Compute approval_wait_ms from timestamps
+  let approvalWaitMs: number | null = null;
+  if (s.approvalWaitStartedAt && s.approvalResolvedAt) {
+    approvalWaitMs = s.approvalResolvedAt.getTime() - s.approvalWaitStartedAt.getTime();
+  }
+
   return {
     id: s.id,
     run_id: s.runId,
@@ -106,6 +129,8 @@ function formatStep(s: typeof runSteps.$inferSelect) {
     error: s.error,
     output_truncated: s.outputTruncated,
     approval_status: s.approvalStatus,
+    approved_by: s.approvalResolvedBy ?? null,
+    approval_wait_ms: approvalWaitMs,
     metadata: s.metadata,
     started_at: s.startedAt?.toISOString() ?? null,
     completed_at: s.completedAt?.toISOString() ?? null,
@@ -155,7 +180,6 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       if (!verResult[0]) throw notFound('Version not found');
       versionId = verResult[0].id;
     } else {
-      // Try active deployment for this environment
       const depResult = await db
         .select({ versionId: deployments.versionId })
         .from(deployments)
@@ -171,7 +195,6 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       if (depResult[0]) {
         versionId = depResult[0].versionId;
       } else {
-        // Fall back to latest version
         const latestResult = await db
           .select({ id: agentVersions.id })
           .from(agentVersions)
@@ -228,14 +251,12 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
           }],
         });
 
-        // Store workflow ID
         await db
           .update(runs)
           .set({ temporalWorkflowId: workflowId })
           .where(eq(runs.id, runId));
       }
     } catch (err) {
-      // Update run to failed if workflow start fails
       await db
         .update(runs)
         .set({
@@ -252,14 +273,16 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       reply.status(202);
       return {
         id: runId,
+        agent_id: request.params.agent_id,
         status: 'queued',
         poll_url: `/v1/runs/${runId}`,
+        created_at: now.toISOString(),
       };
     }
 
     // Stream mode: SSE is Phase 3, fall back to sync
     // Sync mode: poll until complete (with timeout)
-    const maxWaitMs = 300_000; // 5 min
+    const maxWaitMs = 300_000;
     const pollInterval = 500;
     const startTime = Date.now();
 
@@ -295,17 +318,34 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/runs — list runs
   app.get('/v1/runs', async (request) => {
     const orgId = request.orgId!;
-    const { limit, cursor, order, agent_id, status } = paginationSchema.parse(request.query);
+    const query = listRunsSchema.parse(request.query);
 
     const conditions = [eq(runs.orgId, orgId)];
-    if (agent_id) conditions.push(eq(runs.agentId, agent_id));
-    if (status) conditions.push(eq(runs.status, status as typeof runs.status.enumValues[number]));
+    if (query.agent_id) conditions.push(eq(runs.agentId, query.agent_id));
+    if (query.status) conditions.push(eq(runs.status, query.status as typeof runs.status.enumValues[number]));
+    if (query.environment) {
+      const envName = query.environment as 'development' | 'staging' | 'production';
+      const envRow = await db
+        .select({ id: environments.id })
+        .from(environments)
+        .where(and(eq(environments.orgId, orgId), eq(environments.name, envName)))
+        .limit(1);
+      if (envRow[0]) {
+        conditions.push(eq(runs.environmentId, envRow[0].id));
+      }
+    }
+    if (query.created_after) {
+      conditions.push(gte(runs.createdAt, new Date(query.created_after)));
+    }
+    if (query.created_before) {
+      conditions.push(lte(runs.createdAt, new Date(query.created_before)));
+    }
 
-    if (cursor) {
-      const decoded = decodeCursor(cursor);
+    if (query.cursor) {
+      const decoded = decodeCursor(query.cursor);
       if (decoded) {
         conditions.push(
-          order === 'desc' ? lt(runs.id, decoded.id) : gt(runs.id, decoded.id),
+          query.order === 'desc' ? lt(runs.id, decoded.id) : gt(runs.id, decoded.id),
         );
       }
     }
@@ -314,11 +354,11 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       .select()
       .from(runs)
       .where(and(...conditions))
-      .orderBy(order === 'desc' ? desc(runs.createdAt) : runs.createdAt)
-      .limit(limit + 1);
+      .orderBy(query.order === 'desc' ? desc(runs.createdAt) : runs.createdAt)
+      .limit(query.limit + 1);
 
-    const hasMore = rows.length > limit;
-    const data = rows.slice(0, limit);
+    const hasMore = rows.length > query.limit;
+    const data = rows.slice(0, query.limit);
 
     return {
       data: data.map(formatRun),
@@ -327,11 +367,11 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
     };
   });
 
-  // GET /v1/runs/:run_id/steps — get trace
+  // GET /v1/runs/:run_id/steps — get trace (with pagination)
   app.get<{ Params: { run_id: string } }>('/v1/runs/:run_id/steps', async (request) => {
     const orgId = request.orgId!;
+    const query = listStepsSchema.parse(request.query);
 
-    // Verify run exists and belongs to org
     const runResult = await db
       .select({ id: runs.id })
       .from(runs)
@@ -340,13 +380,30 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
 
     if (!runResult[0]) throw notFound('Run not found');
 
-    const steps = await db
+    const conditions = [eq(runSteps.runId, request.params.run_id)];
+
+    if (query.cursor) {
+      const decoded = decodeCursor(query.cursor);
+      if (decoded) {
+        conditions.push(gt(runSteps.id, decoded.id));
+      }
+    }
+
+    const rows = await db
       .select()
       .from(runSteps)
-      .where(eq(runSteps.runId, request.params.run_id))
-      .orderBy(runSteps.stepOrder);
+      .where(and(...conditions))
+      .orderBy(runSteps.stepOrder)
+      .limit(query.limit + 1);
 
-    return { data: steps.map(formatStep) };
+    const hasMore = rows.length > query.limit;
+    const data = rows.slice(0, query.limit);
+
+    return {
+      data: data.map(formatStep),
+      has_more: hasMore,
+      next_cursor: hasMore && data.length > 0 ? encodeCursor(data[data.length - 1]!.id) : null,
+    };
   });
 
   // POST /v1/runs/:run_id/cancel — cancel run
@@ -365,7 +422,6 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       throw badRequest(`Run is already ${result[0].status}`);
     }
 
-    // Cancel Temporal workflow if exists
     if (result[0].temporalWorkflowId) {
       try {
         const temporal = getTemporalClient();
@@ -378,17 +434,23 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
+    const cancelledAt = new Date();
     await db
       .update(runs)
-      .set({ status: 'cancelled', completedAt: new Date(), updatedAt: new Date() })
+      .set({ status: 'cancelled', completedAt: cancelledAt, updatedAt: cancelledAt })
       .where(eq(runs.id, request.params.run_id));
 
-    return { id: request.params.run_id, status: 'cancelled' };
+    return {
+      id: request.params.run_id,
+      status: 'cancelled',
+      cancelled_at: cancelledAt.toISOString(),
+    };
   });
 
   // POST /v1/runs/:run_id/approve — send approval signal
   app.post<{ Params: { run_id: string } }>('/v1/runs/:run_id/approve', async (request) => {
     const orgId = request.orgId!;
+    const body = approveSchema.parse(request.body ?? {});
 
     const result = await db
       .select()
@@ -413,12 +475,17 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
-    return { id: request.params.run_id, status: 'approved' };
+    return {
+      id: request.params.run_id,
+      step_id: body.step_id ?? null,
+      status: 'approved',
+    };
   });
 
   // POST /v1/runs/:run_id/deny — send denial signal
   app.post<{ Params: { run_id: string } }>('/v1/runs/:run_id/deny', async (request) => {
     const orgId = request.orgId!;
+    const body = denySchema.parse(request.body ?? {});
 
     const result = await db
       .select()
@@ -436,13 +503,18 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
         const temporal = getTemporalClient();
         if (temporal) {
           const handle = temporal.workflow.getHandle(result[0].temporalWorkflowId);
-          await handle.signal('approval', { decision: 'denied', resolvedBy: request.userId });
+          await handle.signal('approval', { decision: 'denied', resolvedBy: request.userId, reason: body.reason });
         }
       } catch (err) {
         throw badRequest(`Failed to send denial signal: ${err instanceof Error ? err.message : 'unknown'}`);
       }
     }
 
-    return { id: request.params.run_id, status: 'denied' };
+    return {
+      id: request.params.run_id,
+      step_id: body.step_id ?? null,
+      status: 'denied',
+      reason: body.reason ?? null,
+    };
   });
 }
