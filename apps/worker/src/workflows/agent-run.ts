@@ -6,12 +6,9 @@ import {
 } from '@temporalio/workflow';
 import type { RunInput } from '@agentsy/shared';
 
-// Activities are proxied — Temporal serializes/deserializes across the workflow boundary
 const activities = proxyActivities<typeof import('../activities/index.js')>({
   startToCloseTimeout: '5 minutes',
-  retry: {
-    maximumAttempts: 2,
-  },
+  retry: { maximumAttempts: 2 },
 });
 
 // ── Signals ─────────────────────────────────────────────────────────
@@ -19,6 +16,7 @@ const activities = proxyActivities<typeof import('../activities/index.js')>({
 export interface ApprovalDecision {
   decision: 'approved' | 'denied';
   resolvedBy?: string;
+  reason?: string;
 }
 
 const approvalSignal = defineSignal<[ApprovalDecision]>('approval');
@@ -48,23 +46,43 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
 
   // 2. Load agent config
   if (!versionId) {
-    await activities.persistRun({
-      runId,
-      status: 'failed',
-      error: 'No agent version available',
-      durationMs: Date.now() - startedAt,
+    await activities.emitRunEvent(runId, {
+      type: 'run.failed', run_id: runId,
+      error: 'No agent version available', error_type: 'internal_error',
+      total_tokens_in: 0, total_tokens_out: 0, total_cost_usd: 0,
+      duration_ms: Date.now() - startedAt, failed_step_id: null,
     });
+    await activities.persistRun({ runId, status: 'failed', error: 'No agent version available', durationMs: Date.now() - startedAt });
     return;
   }
 
   const config = await activities.loadAgentConfig(versionId);
+  const resolvedModel = config.model;
 
-  // 3. Resolve model string (capability class → concrete model)
-  const resolvedModel = resolveModelFromConfig(config.model, config.modelSpec);
-  const resolvedFallback = config.fallbackModel ?? null;
+  // 3. Emit run.started
+  await activities.emitRunEvent(runId, {
+    type: 'run.started',
+    run_id: runId,
+    agent_id: input.agentId,
+    version_id: versionId,
+    session_id: input.sessionId ?? null,
+    model: resolvedModel,
+  });
 
-  // 4. Build initial messages from input
+  // 4. Build messages (load session history if applicable)
   const messages: Array<{ role: 'user' | 'assistant' | 'tool'; content: string; toolCallId?: string }> = [];
+
+  // Load session history for multi-turn
+  const sessionMaxMessages = (config.guardrailsConfig as Record<string, unknown>)?.['sessionMaxMessages'] as number | undefined ?? 20;
+  if (input.sessionId) {
+    const history = await activities.loadSessionHistory(input.sessionId, sessionMaxMessages);
+    for (const msg of history) {
+      messages.push(msg);
+    }
+  }
+
+  // Add current input
+  const userInputText = extractInputText(input.input);
   if (input.input.type === 'text') {
     messages.push({ role: 'user', content: input.input.text });
   } else if (input.input.type === 'messages') {
@@ -82,11 +100,8 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
   let totalCost = 0;
 
   const guardrails = config.guardrailsConfig as {
-    maxIterations?: number;
-    maxTokens?: number;
-    maxCostUsd?: number;
-    timeoutMs?: number;
-    outputValidation?: Array<{ type: string; config?: unknown }>;
+    maxIterations?: number; maxTokens?: number; maxCostUsd?: number;
+    timeoutMs?: number; outputValidation?: Array<{ type: string; config?: unknown }>;
   };
 
   const maxIterations = guardrails.maxIterations ?? 10;
@@ -94,117 +109,112 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
   const maxCostUsd = guardrails.maxCostUsd ?? 1.0;
   const timeoutMs = guardrails.timeoutMs ?? 300_000;
 
-  // 6. Build tools map for Vercel AI SDK
+  // 6. Build tools map
   const toolsConfig = (config.toolsConfig ?? []) as Array<{
-    name: string;
-    type: string;
-    description?: string;
-    inputSchema?: Record<string, unknown>;
-    riskLevel?: string;
-    timeout?: number;
-    approvalPolicy?: Record<string, unknown>;
+    name: string; type: string; description?: string; inputSchema?: Record<string, unknown>;
+    riskLevel?: string; timeout?: number; approvalPolicy?: Record<string, unknown>;
   }>;
 
   const aiTools: Record<string, { description: string; parameters: Record<string, unknown> }> = {};
   for (const tool of toolsConfig) {
     if (tool.type === 'native' && tool.inputSchema) {
-      aiTools[tool.name] = {
-        description: tool.description ?? tool.name,
-        parameters: tool.inputSchema,
-      };
+      aiTools[tool.name] = { description: tool.description ?? tool.name, parameters: tool.inputSchema };
     }
   }
 
   // 7. Agentic loop
+  let lastOutputText = '';
   while (iteration < maxIterations) {
-    // Guardrail checks (before each iteration)
-    if (totalTokensIn + totalTokensOut >= maxTokens) {
-      await persistGuardrailViolation(runId, orgId, ++stepOrder, 'max_tokens', resolvedModel, {
-        totalTokensIn, totalTokensOut, totalCost, startedAt,
-      });
-      return;
-    }
-
-    if (totalCost >= maxCostUsd) {
-      await persistGuardrailViolation(runId, orgId, ++stepOrder, 'max_cost_usd', resolvedModel, {
-        totalTokensIn, totalTokensOut, totalCost, startedAt,
-      });
-      return;
-    }
-
-    if (Date.now() - startedAt >= timeoutMs) {
-      await persistGuardrailViolation(runId, orgId, ++stepOrder, 'timeout', resolvedModel, {
+    // Guardrail checks
+    const guardrailViolation = checkGuardrails({
+      iteration, totalTokensIn, totalTokensOut, totalCost, startedAt,
+      maxIterations, maxTokens, maxCostUsd, timeoutMs,
+    });
+    if (guardrailViolation) {
+      await emitGuardrailViolation(runId, orgId, ++stepOrder, guardrailViolation, resolvedModel, {
         totalTokensIn, totalTokensOut, totalCost, startedAt,
       });
       return;
     }
 
     iteration++;
+    const stepId = `stp_${runId.slice(4)}_${stepOrder + 1}`;
 
-    // LLM call
+    // Emit step.thinking
+    await activities.emitRunEvent(runId, {
+      type: 'step.thinking', step_id: stepId, step_order: stepOrder + 1, model: resolvedModel,
+    });
+
+    // LLM call (streaming — emits step.text_delta events internally)
+    const llmStepStart = Date.now();
     const llmResult = await activities.llmCall({
       model: resolvedModel,
-      fallbackModel: resolvedFallback,
+      fallbackModel: config.fallbackModel,
       systemPrompt: config.systemPrompt,
       messages: messages as Array<{ role: 'user' | 'assistant' | 'tool'; content: string }>,
       tools: Object.keys(aiTools).length > 0 ? aiTools as Record<string, never> : undefined,
       modelParams: config.modelParams as Record<string, unknown>,
+      runId,
+      stepId,
     });
 
     totalTokensIn += llmResult.tokensIn;
     totalTokensOut += llmResult.tokensOut;
     totalCost += llmResult.costUsd;
 
-    // Persist LLM step
-    await activities.persistRunStep({
+    // Persist + emit step.completed for LLM call
+    const llmStepId = await activities.persistRunStep({
       runId, orgId, stepOrder: ++stepOrder,
-      type: 'llm_call',
-      model: llmResult.model,
-      tokensIn: llmResult.tokensIn,
-      tokensOut: llmResult.tokensOut,
-      costUsd: llmResult.costUsd,
-      output: llmResult.text || undefined,
+      type: 'llm_call', model: llmResult.model,
+      tokensIn: llmResult.tokensIn, tokensOut: llmResult.tokensOut, costUsd: llmResult.costUsd,
+      output: llmResult.text || undefined, durationMs: Date.now() - llmStepStart,
     });
+
+    await activities.emitRunEvent(runId, {
+      type: 'step.completed', step_id: llmStepId, step_order: stepOrder,
+      step_type: 'llm_call', tokens_in: llmResult.tokensIn, tokens_out: llmResult.tokensOut,
+      cost_usd: llmResult.costUsd, duration_ms: Date.now() - llmStepStart,
+    });
+
+    lastOutputText = llmResult.text;
 
     // No tool calls → final response
     if (llmResult.toolCalls.length === 0) {
-      // Run output validators before completing
+      // Run output validators
       const validationResult = await activities.validateOutput({
-        output: llmResult.text,
-        validators: guardrails.outputValidation,
+        output: llmResult.text, validators: guardrails.outputValidation,
       });
 
       if (!validationResult.passed) {
-        // Persist guardrail step for output violation
-        await activities.persistRunStep({
-          runId, orgId, stepOrder: ++stepOrder,
-          type: 'guardrail',
+        const gStepId = await activities.persistRunStep({
+          runId, orgId, stepOrder: ++stepOrder, type: 'guardrail',
           output: `Output validation failed: ${validationResult.violations.map((v) => v.message).join('; ')}`,
         });
-
-        await activities.persistRun({
-          runId,
-          status: 'completed',
-          output: { type: 'text', text: llmResult.text },
-          totalTokensIn, totalTokensOut, totalCostUsd: totalCost,
-          durationMs: Date.now() - startedAt,
-          model: resolvedModel,
-          metadata: {
-            guardrail_triggered: 'output_validation',
-            violations: validationResult.violations,
-          },
+        for (const v of validationResult.violations) {
+          await activities.emitRunEvent(runId, {
+            type: 'step.guardrail', step_id: gStepId, step_order: stepOrder,
+            guardrail_type: v.type, passed: false, message: v.message,
+          });
+        }
+        await completeRun(runId, llmResult.text, resolvedModel, {
+          totalTokensIn, totalTokensOut, totalCost, startedAt,
+          metadata: { guardrail_triggered: 'output_validation', violations: validationResult.violations },
         });
-        return;
+      } else {
+        await completeRun(runId, llmResult.text, resolvedModel, {
+          totalTokensIn, totalTokensOut, totalCost, startedAt,
+        });
       }
 
-      await activities.persistRun({
-        runId,
-        status: 'completed',
-        output: { type: 'text', text: llmResult.text },
-        totalTokensIn, totalTokensOut, totalCostUsd: totalCost,
-        durationMs: Date.now() - startedAt,
-        model: resolvedModel,
-      });
+      // Persist session messages if session-scoped
+      if (input.sessionId) {
+        await activities.persistMessages({
+          sessionId: input.sessionId, orgId, runId,
+          userMessage: userInputText, agentMessage: llmResult.text,
+        });
+      }
+
+      await activities.cleanupRunEvents(runId);
       return;
     }
 
@@ -214,104 +224,147 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
     for (const toolCall of llmResult.toolCalls) {
       const toolDef = toolsConfig.find((t) => t.name === toolCall.toolName);
 
-      // Approval gate check
-      if (toolDef) {
-        const needsApproval = checkApproval(toolDef, environment);
-        if (needsApproval) {
-          // Persist approval request step
-          await activities.persistRunStep({
-            runId, orgId, stepOrder: ++stepOrder,
-            type: 'approval_request',
-            toolName: toolCall.toolName,
-            input: JSON.stringify(toolCall.args),
-            approvalStatus: 'pending',
-          });
+      // Emit step.tool_call
+      await activities.emitRunEvent(runId, {
+        type: 'step.tool_call', step_id: `stp_tc_${stepOrder}`, step_order: stepOrder + 1,
+        tool_name: toolCall.toolName, tool_call_id: toolCall.toolCallId, arguments: toolCall.args,
+      });
 
-          // Set run status to awaiting_approval
-          await activities.persistRun({ runId, status: 'awaiting_approval' as never });
+      // Approval gate
+      if (toolDef && checkApproval(toolDef, environment)) {
+        const approvalStepId = await activities.persistRunStep({
+          runId, orgId, stepOrder: ++stepOrder, type: 'approval_request',
+          toolName: toolCall.toolName, input: JSON.stringify(toolCall.args), approvalStatus: 'pending',
+        });
 
-          // Wait for approval signal
-          let decision: ApprovalDecision | undefined;
-          setHandler(approvalSignal, (d) => { decision = d; });
-          await condition(() => decision !== undefined, '1 hour');
+        await activities.emitRunEvent(runId, {
+          type: 'step.approval_requested', step_id: approvalStepId, step_order: stepOrder,
+          tool_name: toolCall.toolName, tool_call_id: toolCall.toolCallId,
+          arguments: toolCall.args, risk_level: (toolDef.riskLevel as 'write' | 'admin') ?? 'write',
+        });
 
-          // Resume run
-          await activities.persistRun({ runId, status: 'running' });
+        await activities.persistRun({ runId, status: 'awaiting_approval' as never });
 
-          if (!decision || decision.decision === 'denied') {
-            messages.push({
-              role: 'tool',
-              content: `Tool "${toolCall.toolName}" was denied by approval gate.`,
-              toolCallId: toolCall.toolCallId,
-            });
-            continue;
-          }
+        let decision: ApprovalDecision | undefined;
+        setHandler(approvalSignal, (d) => { decision = d; });
+        await condition(() => decision !== undefined, '1 hour');
+
+        await activities.persistRun({ runId, status: 'running' });
+
+        await activities.emitRunEvent(runId, {
+          type: 'step.approval_resolved', step_id: approvalStepId,
+          tool_name: toolCall.toolName, tool_call_id: toolCall.toolCallId,
+          approved: decision?.decision === 'approved',
+          resolved_by: decision?.resolvedBy ?? null, reason: decision?.reason,
+        });
+
+        if (!decision || decision.decision === 'denied') {
+          messages.push({ role: 'tool', content: `Tool "${toolCall.toolName}" was denied.`, toolCallId: toolCall.toolCallId });
+          continue;
         }
       }
 
       // Execute tool
+      const toolStart = Date.now();
       const toolResult = await activities.executeNativeTool({
-        toolName: toolCall.toolName,
-        args: toolCall.args,
-        timeout: toolDef?.timeout,
+        toolName: toolCall.toolName, args: toolCall.args, timeout: toolDef?.timeout,
+      });
+
+      // Emit step.tool_result
+      await activities.emitRunEvent(runId, {
+        type: 'step.tool_result', step_id: `stp_tr_${stepOrder}`,
+        tool_name: toolCall.toolName, tool_call_id: toolCall.toolCallId,
+        result: toolResult.output, duration_ms: toolResult.durationMs, error: toolResult.error ?? null,
       });
 
       // Persist tool step
-      await activities.persistRunStep({
-        runId, orgId, stepOrder: ++stepOrder,
-        type: 'tool_call',
-        toolName: toolCall.toolName,
-        input: JSON.stringify(toolCall.args),
-        output: toolResult.output,
-        durationMs: toolResult.durationMs,
-        error: toolResult.error,
-        outputTruncated: toolResult.truncated,
+      const toolStepId = await activities.persistRunStep({
+        runId, orgId, stepOrder: ++stepOrder, type: 'tool_call', toolName: toolCall.toolName,
+        input: JSON.stringify(toolCall.args), output: toolResult.output,
+        durationMs: toolResult.durationMs, error: toolResult.error, outputTruncated: toolResult.truncated,
       });
 
-      // Add tool result to messages for next iteration
+      await activities.emitRunEvent(runId, {
+        type: 'step.completed', step_id: toolStepId, step_order: stepOrder,
+        step_type: 'tool_call', tokens_in: 0, tokens_out: 0, cost_usd: 0, duration_ms: Date.now() - toolStart,
+      });
+
       messages.push({
         role: 'tool',
-        content: toolResult.error
-          ? `Error: ${toolResult.error}`
-          : toolResult.output,
+        content: toolResult.error ? `Error: ${toolResult.error}` : toolResult.output,
         toolCallId: toolCall.toolCallId,
       });
     }
   }
 
-  // Max iterations reached
-  await persistGuardrailViolation(runId, orgId, ++stepOrder, 'max_iterations', resolvedModel, {
+  // Max iterations
+  await emitGuardrailViolation(runId, orgId, ++stepOrder, 'max_iterations', resolvedModel, {
     totalTokensIn, totalTokensOut, totalCost, startedAt,
   });
+
+  // Still persist session messages with last output
+  if (input.sessionId && lastOutputText) {
+    await activities.persistMessages({
+      sessionId: input.sessionId, orgId, runId,
+      userMessage: userInputText, agentMessage: lastOutputText,
+    });
+  }
+
+  await activities.cleanupRunEvents(runId);
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/** Resolve model from config — the model field is already resolved at version creation time. */
-function resolveModelFromConfig(model: string, _modelSpec: unknown): string {
-  return model;
+function extractInputText(input: RunInput): string {
+  if (input.type === 'text') return input.text;
+  if (input.type === 'messages') return input.messages[input.messages.length - 1]?.content ?? '';
+  return JSON.stringify(input.data);
 }
 
-/** Persist a guardrail violation and mark the run as timed out. */
-async function persistGuardrailViolation(
-  runId: string, orgId: string, stepOrder: number,
-  reason: string, model: string,
+function checkGuardrails(state: {
+  iteration: number; totalTokensIn: number; totalTokensOut: number;
+  totalCost: number; startedAt: number;
+  maxIterations: number; maxTokens: number; maxCostUsd: number; timeoutMs: number;
+}): string | null {
+  if (state.totalTokensIn + state.totalTokensOut >= state.maxTokens) return 'max_tokens';
+  if (state.totalCost >= state.maxCostUsd) return 'max_cost';
+  if (Date.now() - state.startedAt >= state.timeoutMs) return 'timeout';
+  return null;
+}
+
+async function emitGuardrailViolation(
+  runId: string, orgId: string, stepOrder: number, reason: string, model: string,
   state: { totalTokensIn: number; totalTokensOut: number; totalCost: number; startedAt: number },
 ) {
-  await activities.persistRunStep({
-    runId, orgId, stepOrder,
-    type: 'guardrail',
-    output: `${reason} exceeded`,
+  await activities.persistRunStep({ runId, orgId, stepOrder, type: 'guardrail', output: `${reason} exceeded` });
+  await activities.emitRunEvent(runId, {
+    type: 'run.failed', run_id: runId, error: `Guardrail triggered: ${reason}`,
+    error_type: reason, total_tokens_in: state.totalTokensIn, total_tokens_out: state.totalTokensOut,
+    total_cost_usd: state.totalCost, duration_ms: Date.now() - state.startedAt, failed_step_id: null,
   });
   await activities.persistRun({
-    runId, status: 'timeout',
-    error: `Guardrail triggered: ${reason}`,
-    totalTokensIn: state.totalTokensIn,
-    totalTokensOut: state.totalTokensOut,
-    totalCostUsd: state.totalCost,
-    durationMs: Date.now() - state.startedAt,
-    model,
+    runId, status: 'timeout', error: `Guardrail triggered: ${reason}`,
+    totalTokensIn: state.totalTokensIn, totalTokensOut: state.totalTokensOut,
+    totalCostUsd: state.totalCost, durationMs: Date.now() - state.startedAt, model,
     metadata: { guardrail_triggered: reason },
+  });
+  await activities.cleanupRunEvents(runId);
+}
+
+async function completeRun(
+  runId: string, text: string, model: string,
+  state: { totalTokensIn: number; totalTokensOut: number; totalCost: number; startedAt: number; metadata?: Record<string, unknown> },
+) {
+  await activities.emitRunEvent(runId, {
+    type: 'run.completed', run_id: runId, output: { type: 'text', text },
+    total_tokens_in: state.totalTokensIn, total_tokens_out: state.totalTokensOut,
+    total_cost_usd: state.totalCost, duration_ms: Date.now() - state.startedAt, trace_id: null,
+  });
+  await activities.persistRun({
+    runId, status: 'completed', output: { type: 'text', text },
+    totalTokensIn: state.totalTokensIn, totalTokensOut: state.totalTokensOut,
+    totalCostUsd: state.totalCost, durationMs: Date.now() - state.startedAt, model,
+    metadata: state.metadata,
   });
 }
 
@@ -321,13 +374,10 @@ function checkApproval(
 ): boolean {
   const policy = toolDef.approvalPolicy;
   const riskLevel = toolDef.riskLevel ?? 'read';
-
   if (policy?.['autoApprove']) return false;
   if (policy?.['requireApproval']) return true;
-
   const envList = policy?.['requireApprovalIn'] as string[] | undefined;
   if (envList?.includes(environment)) return true;
-
   switch (riskLevel) {
     case 'read': return false;
     case 'write': return environment === 'production';

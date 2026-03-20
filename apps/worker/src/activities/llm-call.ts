@@ -1,6 +1,7 @@
-import { generateText, jsonSchema } from 'ai';
+import { streamText, jsonSchema } from 'ai';
 import { estimateCost } from '@agentsy/shared';
 import { callWithFallback } from '../providers/fallback-handler.js';
+import { publishRunEvent } from '../streaming/event-emitter.js';
 
 export interface LlmCallInput {
   model: string;
@@ -13,6 +14,9 @@ export interface LlmCallInput {
     topP?: number;
     maxOutputTokens?: number;
   };
+  // Streaming context
+  runId?: string;
+  stepId?: string;
 }
 
 export interface LlmCallResult {
@@ -29,10 +33,11 @@ export interface LlmCallResult {
 }
 
 /**
- * Activity: Call LLM via Vercel AI SDK with fallback support.
+ * Activity: Call LLM via Vercel AI SDK with streaming + fallback support.
+ * Uses streamText() for token-level streaming, publishes step.text_delta events via Redis.
  */
 export async function llmCall(input: LlmCallInput): Promise<LlmCallResult> {
-  // Build tool definitions using jsonSchema
+  // Build tool definitions
   const tools: Record<string, unknown> = {};
   if (input.tools) {
     for (const [name, def] of Object.entries(input.tools)) {
@@ -71,7 +76,27 @@ export async function llmCall(input: LlmCallInput): Promise<LlmCallResult> {
       };
       if (Object.keys(tools).length > 0) opts['tools'] = tools;
 
-      return generateText(opts as Parameters<typeof generateText>[0]);
+      const stream = streamText(opts as Parameters<typeof streamText>[0]);
+
+      // Accumulate full text while streaming tokens
+      let fullText = '';
+      for await (const chunk of stream.textStream) {
+        fullText += chunk;
+
+        // Emit step.text_delta event via Redis
+        if (input.runId && input.stepId && chunk) {
+          await publishRunEvent(input.runId, {
+            type: 'step.text_delta',
+            step_id: input.stepId,
+            delta: chunk,
+          });
+        }
+      }
+
+      // Await final result for usage and tool calls
+      const finalResult = await stream;
+
+      return { fullText, finalResult };
     },
     {
       primaryModel: input.model,
@@ -79,15 +104,19 @@ export async function llmCall(input: LlmCallInput): Promise<LlmCallResult> {
     },
   );
 
-  // AI SDK v6 uses inputTokens/outputTokens
-  const usage = result.usage as unknown as Record<string, number | undefined>;
+  const { fullText, finalResult } = result;
+
+  // Await promise-based properties from streamText result
+  const text = await finalResult.text;
+  const toolCalls = await finalResult.toolCalls;
+  const usage = await finalResult.usage as unknown as Record<string, number | undefined>;
   const tokensIn = usage?.['inputTokens'] ?? usage?.['promptTokens'] ?? 0;
   const tokensOut = usage?.['outputTokens'] ?? usage?.['completionTokens'] ?? 0;
   const costUsd = estimateCost(input.model, tokensIn, tokensOut) ?? 0;
 
   return {
-    text: result.text ?? '',
-    toolCalls: (result.toolCalls ?? []).map((tc) => ({
+    text: fullText || text || '',
+    toolCalls: (toolCalls ?? []).map((tc: { toolCallId: string; toolName: string }) => ({
       toolCallId: tc.toolCallId,
       toolName: tc.toolName,
       args: (tc as unknown as Record<string, unknown>)['args'] as Record<string, unknown> ?? {},
