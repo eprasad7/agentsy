@@ -13,8 +13,13 @@
   "dependencies": {
     "@agentsy/db": "workspace:*",
     "@agentsy/shared": "workspace:*",
+    "@ai-sdk/anthropic": "^3.0.58",
+    "@ai-sdk/openai": "^3.0.41",
+    "@temporalio/activity": "^1.15.0",
+    "@temporalio/client": "^1.15.0",
     "@temporalio/worker": "^1.11.7",
-    "@temporalio/workflow": "^1.11.7"
+    "@temporalio/workflow": "^1.11.7",
+    "ai": "^6.0.116"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
