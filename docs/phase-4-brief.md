@@ -75,6 +75,7 @@ apps/api/src/routes/
                          GET /v1/eval/datasets/:dataset_id/cases/:case_id
                          PATCH /v1/eval/datasets/:dataset_id/cases/:case_id
                          DELETE /v1/eval/datasets/:dataset_id/cases/:case_id
+                         POST /v1/eval/datasets/:dataset_id/cases/from-run (run trace → case)
 ```
 
 **Create dataset** flow:
@@ -118,9 +119,9 @@ packages/eval/src/
   index.ts            → Barrel export with agentsyEval namespace
 ```
 
-**Core API**:
+**Core API** (per spec-sdk.md — uses `agentsyEval` namespace, NOT `agentsy.eval`):
 ```typescript
-const agentsyEval = {
+export const agentsyEval = {
   defineDataset(def: DatasetDefinition): Readonly<DatasetDefinition>;
   defineExperiment(def: ExperimentDefinition): Readonly<ExperimentDefinition>;
   run(experiment: ExperimentDefinition): Promise<ExperimentResult>;
@@ -293,9 +294,9 @@ input: { experimentId, datasetId, agentId, versionId, config }
 
 ---
 
-### 4.8 — Experiment Comparison & Baseline Tracking
+### 4.8 — Experiment API, Comparison & Baseline Tracking
 
-**Ref**: spec-api.md section 7.13–7.16
+**Ref**: spec-api.md sections 7.11–7.16
 
 ```
 apps/api/src/routes/
@@ -307,6 +308,8 @@ apps/api/src/routes/
   eval-baselines.ts     → POST /v1/eval/baselines (set baseline from experiment)
                            GET /v1/eval/baselines/active?agent_id=...&dataset_id=...
 ```
+
+> **Note**: Comparison uses `GET` with query params per spec-api.md §7.14, not `POST .../compare/:other_id`.
 
 **Comparison logic**:
 1. Load both experiments + their per-case results
@@ -331,10 +334,7 @@ apps/api/src/routes/
 
 **Ref**: spec-api.md section 7.17, user-journeys.md J12
 
-```
-apps/api/src/routes/
-  eval-cases.ts         → POST /v1/eval/datasets/:dataset_id/cases/from-run
-```
+The from-run endpoint lives in `eval-cases.ts` alongside the other case CRUD routes (step 4.1).
 
 **Flow**:
 1. Accept `{ run_id, expected_output?, expected_tool_calls? }`
@@ -371,7 +371,21 @@ packages/cli/src/
 3. Run experiment locally (in-process) or remotely (`--remote`)
 4. Display results in table format
 5. If `--ci`: compare against baseline, exit code 1 if regression > threshold
-6. If `--format markdown`: output GitHub PR comment format
+6. If `--format markdown` (alias `--pr-comment`): output GitHub PR comment format
+
+**CLI flags** (reconciled with implementation plan):
+```
+Options:
+  -d, --dataset <name>              Dataset to run (default: all)
+  -t, --tool-mode <mode>            mock | dry-run | live [default: mock]
+  -p, --parallelism <n>             Parallel case execution [default: 5]
+  --ci                              Compare against baseline; exit 1 on regression
+  --regression-threshold <n>        Max score drop [default: 0.05]
+  -f, --format <format>             table | json | markdown [default: table]
+  --pr-comment                      Alias for --format markdown
+  --remote                          Run against deployed agent (not local)
+  -v, --verbose                     Show per-case details
+```
 
 **Terminal output**:
 ```
@@ -391,31 +405,36 @@ packages/cli/src/
 
 ---
 
-### 4.11 — Dashboard UI: Eval Pages
+### 4.11 — Dashboard UI: Eval Pages (Minimal Phase 4 Slice)
 
-**Ref**: Phase 3.5 pattern (tabs on agent detail page)
+> **Scope note**: Phase 4 ships the **minimal eval UI** needed for the core workflow. The full eval hub (grader config, baseline management pages, dataset editor) ships in Phase 8. This matches Amendment A10 in the implementation plan.
 
 ```
 apps/web/src/app/
   evals/
-    page.tsx              → Experiment list (all agents)
-  agents/[id]/
-    evals/page.tsx        → Agent-scoped experiment list
-    evals/[expId]/page.tsx → Experiment detail with per-case results
+    datasets/page.tsx              → Dataset list
+    experiments/page.tsx           → Experiment list (all agents, filtered)
+    experiments/[id]/page.tsx      → Experiment detail with per-case results
 
 apps/web/src/components/
-  eval-results-table.tsx  → Per-case score grid (cases × graders)
-  eval-comparison.tsx     → Side-by-side experiment comparison
-  score-badge.tsx         → Color-coded score display (green/yellow/red)
+  eval-comparison.tsx              → Side-by-side experiment comparison widget
+  score-badge.tsx                  → Color-coded score display (green ≥0.8, yellow ≥0.5, red <0.5)
 ```
 
-**Experiment list**: DataTable with Status, Dataset, Version, Scores summary, Cost, Duration, Created.
+**Phase 4 UI scope**:
+- Dataset list (name, case count, created)
+- Experiment list with filters (status, agent, dataset)
+- Experiment detail: summary scores + per-case results table (expandable)
+- Enable the "Evals" tab on agent detail page → links to experiments filtered by agent
 
-**Experiment detail**: Header with summary scores + pass/fail counts. Below: per-case results table with expandable case details (input, expected vs actual output, per-grader scores).
+**Deferred to Phase 8**:
+- Dataset case editor (inline editing of cases)
+- Grader configuration UI
+- Baseline management page
+- Eval hub landing page (`/evals/page.tsx`)
+- Sparkline trend charts on experiment list
 
-**Comparison view**: Two experiments side-by-side with score deltas highlighted (green = improved, red = regressed).
-
-**Done when**: Enable the "Evals" tab on agent detail. List experiments → click → view per-case results with scores.
+**Done when**: Navigate to Evals tab on agent → see experiment list → click → view per-case results with score badges.
 
 ---
 
@@ -427,7 +446,9 @@ apps/web/src/components/
 | Unit | `packages/eval/src/__tests__/json-schema.test.ts` | Valid/invalid JSON, schema validation |
 | Unit | `packages/eval/src/__tests__/regex.test.ts` | Pattern matching, flags |
 | Unit | `packages/eval/src/__tests__/numeric-threshold.test.ts` | All operators, extraction |
+| Unit | `packages/eval/src/__tests__/embedding-similarity.test.ts` | Cosine similarity, threshold |
 | Unit | `packages/eval/src/__tests__/tool-name-match.test.ts` | Set comparison, strict mode |
+| Unit | `packages/eval/src/__tests__/tool-args-match.test.ts` | Partial match, missing keys |
 | Unit | `packages/eval/src/__tests__/tool-sequence.test.ts` | LCS scoring, extra calls |
 | Unit | `packages/eval/src/__tests__/unnecessary-steps.test.ts` | Step counting |
 | Integration | `apps/api/src/__tests__/eval-datasets.test.ts` | Dataset CRUD, bulk case upload |
@@ -454,7 +475,7 @@ apps/web/src/components/
 | Run-to-case | Convert run trace to eval case with pre-populated mocks |
 | CLI eval run | `agentsy eval run --dataset golden` prints score table |
 | CI mode | `agentsy eval run --ci` exits 1 on regression |
-| Dashboard | Experiment list + detail + comparison views render |
+| Dashboard | Experiment list + detail with score badges render |
 | CI passes | `turbo build && turbo lint && turbo typecheck && turbo test` |
 
 ---
@@ -465,6 +486,7 @@ apps/web/src/components/
 - Do not implement MCP streamable-http transport (Phase 6)
 - Do not implement connector catalog (Phase 6b)
 - Do not implement deployment management (Phase 7)
+- Do not build full eval hub / dataset editor / baseline management pages (Phase 8)
 - Do not implement auto-evolution engine (Phase 12 — post-beta)
 - Do not implement custom grader server/plugins (post-beta)
 - Do not optimize embedding calls (batch in Phase 5 with KB embeddings)
