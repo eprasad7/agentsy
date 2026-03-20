@@ -21,12 +21,13 @@
 | 1 | Auth & Multi-Tenancy | Milestone 1 | 3-4 days |
 | 2 | Agent Definition & Runtime | Milestone 1 | 5-7 days |
 | 3 | Streaming & API | Milestone 1-2 | 3-4 days |
+| 3.5 | Design Tokens & Retroactive UI | Milestone 2 | 3-4 days |
 | 4 | Eval Engine | Milestone 3 | 5-7 days |
 | 5 | Memory & Knowledge Base | Milestone 4 | 4-5 days |
 | 6 | Tool System & MCP | Milestone 4 | 3-4 days |
 | 6b | Connector Catalog | Milestone 4 | 5-7 days |
 | 7 | Deployment & Environments | Milestone 4 | 3-4 days |
-| 8 | Dashboard & Observability | Milestone 2-4 | 5-7 days |
+| 8 | Dashboard Polish & Observability | Milestone 2-4 | 4-5 days |
 | 9 | CLI Polish & DX | Milestone 1-4 | 3-4 days |
 | 10 | Webhooks & Integration | Milestone 4 | 2-3 days |
 | 11 | Agent Git Repos & CI/CD | Post-beta | 5-7 days |
@@ -1361,40 +1362,19 @@ Files to create:
 
 ---
 
-## Phase 8: Dashboard & Observability (Journeys 6, 13, 16)
+## Phase 8: Dashboard Polish & Observability (Journeys 6, 13, 16)
+
+> **Note**: Per Amendment A10 (Dashboard UI Distribution), core dashboard pages (agent CRUD, runs, trace viewer, evals, KB, connectors, deployments) are now built as thin UI slices within their respective phases. Phase 8 focuses on **polish, observability, and remaining pages** that weren't covered by UI slices.
 
 ### Prerequisites
-- Phase 2 complete (agent runs produce traces)
-- Phase 3 complete (streaming)
-- Phase 4 complete (eval results exist)
+- Phase 3.5 complete (design tokens, sidebar, retroactive UI for Phases 1-3)
+- Phases 4-7 complete (with UI slices)
 
 ### Steps
 
-#### 8.1 Implement design token system and component primitives
+#### 8.1 (MOVED to Phase 3.5) Design token system — see Amendment A10
 
-**What**: Set up the design token system (colors, spacing, typography) for the dashboard. Create base primitives (Box, Stack, Text, Button) using shadcn/ui + Tailwind.
-**Spec reference**: technology-decisions.md D-11.2 (shadcn/ui), D-11.3 (Recharts).
-**Journey**: All dashboard journeys.
-**Acceptance criteria**: Token system exists with light + dark mode. All colors, spacing, and typography use tokens. WCAG 4.5:1 contrast ratios verified. 44x44px minimum touch targets.
-
-Files to create:
-- `packages/ui/src/tokens/` -- Color, spacing, typography tokens
-- `packages/ui/src/primitives/` -- Box, Stack, Text, Button components
-- `packages/ui/src/components/` -- Common components (Card, Table, Badge, Dialog, etc.) from shadcn/ui
-- `apps/web/tailwind.config.ts` -- Tailwind config referencing design tokens
-
-#### 8.2 Implement sidebar navigation and settings pages
-
-**What**: Full sidebar navigation per PRD section 8. Settings pages: General, Environments, Billing.
-**Spec reference**: PRD section 8 (Information Architecture), user-journeys.md navigation map.
-**Journey**: J1 (settings), J5 (environments), J8 (team settings).
-**Acceptance criteria**: Sidebar renders all navigation items per PRD section 8. Settings General shows org name and billing email. Settings Environments page shows dev/staging/prod with tool policies (allow/deny lists, require_approval_for_write_tools). Settings Billing shows plan info and limits.
-
-Files to create:
-- `apps/web/src/components/sidebar.tsx` -- Left sidebar navigation with all sections
-- `apps/web/src/app/settings/general/page.tsx` -- Org general settings
-- `apps/web/src/app/settings/environments/page.tsx` -- Environment management UI (tool policies per env)
-- `apps/web/src/app/settings/billing/page.tsx` -- Billing/plan page
+#### 8.2 (MOVED to Phase 3.5) Sidebar + settings — see Amendment A10
 
 #### 8.3 Implement agent list view
 
@@ -2103,6 +2083,103 @@ Files to modify:
 
 ## Cross-Phase Concerns
 
+### Dashboard UI Distribution (Amendment A10) — MAJOR
+
+**Gap**: The original plan deferred ALL dashboard UI to Phase 8, creating a 40+ page build-out that would discover API gaps from Phases 1-7 too late. Phase 8 becomes a risky integration phase instead of a polish phase.
+
+**Resolution**: Add a thin UI validation slice to each phase. Each slice builds the minimum pages needed to prove the backend APIs work end-to-end from the browser. Phase 8 then focuses on polish, design tokens, observability (usage, alerts, notifications), and missing pages.
+
+**Design system prerequisite**: Phase 8.1 (design tokens + component primitives) should be done FIRST as a Phase 3.5 insert before Phase 4 begins, so all subsequent UI slices use proper tokens instead of hardcoded values.
+
+#### Phase 3.5 — Design Token System (insert before Phase 4)
+
+Move Phase 8.1 here. Before any dashboard pages are built, establish:
+- `packages/ui/src/tokens/` — colors (OKLCH, light+dark), spacing (8pt grid), typography (modular scale)
+- `packages/ui/src/primitives/` — Box, Stack, Text, Button
+- `packages/ui/src/components/` — shadcn/ui imports (Card, Table, Badge, Dialog, Input, Tabs)
+- `apps/web/tailwind.config.ts` — token-based Tailwind config
+- `apps/web/src/components/sidebar.tsx` — persistent sidebar navigation
+- `apps/web/src/lib/api.ts` — internal API client (fetch wrapper with auth)
+
+This unblocks all subsequent UI work with a consistent design system.
+
+#### Retroactive UI for Phases 1-3 (backfill before Phase 4)
+
+These pages should have been built with their respective phases. Build them as a Phase 3.5 backfill alongside the design token system:
+
+**Phase 1 gaps (auth/settings)**:
+- `apps/web/src/app/settings/general/page.tsx` — org name, billing email
+- `apps/web/src/app/settings/environments/page.tsx` — environment tool policies
+- Refactor existing auth pages (signup, login, api-keys, secrets, members) to use design tokens
+
+**Phase 2 gaps (agents)**:
+- `apps/web/src/app/agents/page.tsx` — agent list table
+- `apps/web/src/app/agents/create/page.tsx` — create agent form (model picker, prompt, tools, guardrails)
+- `apps/web/src/app/agents/[id]/page.tsx` — agent overview (minimal, no sparklines yet)
+- `apps/web/src/app/agents/[id]/config/page.tsx` — agent config editor
+
+**Phase 3 gaps (runs/streaming)**:
+- `apps/web/src/app/runs/page.tsx` — run list with filters (status, agent, date)
+- `apps/web/src/app/runs/[id]/page.tsx` — run detail with basic trace viewer
+- `apps/web/src/components/trace-viewer.tsx` — trace timeline (steps in order, expandable)
+- `apps/web/src/components/trace-step.tsx` — individual step renderer
+
+This validates that agent CRUD, run APIs, and trace/step APIs work from the browser before Phase 4 begins.
+
+#### Phase 4 UI slice (eval)
+
+Add after eval backend steps:
+- `apps/web/src/app/evals/datasets/page.tsx` — dataset list with create button
+- `apps/web/src/app/evals/experiments/page.tsx` — experiment list with score summary
+- `apps/web/src/app/evals/experiments/[id]/page.tsx` — experiment detail with per-case results
+- `apps/web/src/components/eval-comparison.tsx` — side-by-side baseline comparison
+
+Validates: pagination, score display, comparison API.
+
+#### Phase 5 UI slice (knowledge base)
+
+Add after KB backend steps:
+- `apps/web/src/app/agents/[id]/knowledge-base/page.tsx` — file upload form + document list with chunk stats
+
+Validates: multipart file upload, processing status polling, document listing.
+
+#### Phase 6 UI slice (tools)
+
+Add after MCP backend steps:
+- `apps/web/src/app/agents/[id]/tools/page.tsx` — native tools + MCP servers per agent, risk level badges
+
+Validates: tool listing API, MCP discovery response format.
+
+#### Phase 6b UI slice (connectors) — REQUIRED for E2E
+
+Add after connector backend steps:
+- `apps/web/src/app/connectors/page.tsx` — connector catalog grid with categories
+- `apps/web/src/app/connectors/callback/page.tsx` — OAuth callback handler
+- `apps/web/src/components/connector-card.tsx` — connector card with Connect/Disconnect
+
+Validates: OAuth flow end-to-end, connector assignment. **This is required for Phase 6b Definition of Done.**
+
+#### Phase 7 UI slice (deployments)
+
+Add after deployment backend steps:
+- `apps/web/src/app/agents/[id]/deployments/page.tsx` — deployment history with version diff viewer
+- `apps/web/src/components/approval-action.tsx` — approve/deny buttons on run detail
+
+Validates: version diff API, deployment status, approval signal flow from dashboard.
+
+#### Phase 8 (reduced scope — polish + observability)
+
+With UI slices done in prior phases, Phase 8 focuses on:
+- Sparkline metric cards on agent overview (agent list + detail sparklines)
+- Usage dashboard (charts, aggregation job, usage API)
+- Alert rules configuration
+- Notification system (bell, email, webhook delivery)
+- Eval hub landing + grader registry + baselines page
+- "Add to eval dataset" dialog on run detail
+- Dashboard home page (populated with real data)
+- Billing/plan page
+- Polish: loading states, empty states, error states, responsive layout, dark mode
+
 ### OTel Instrumentation (Spans across Phases 2-8)
 
 OpenTelemetry instrumentation should be added incrementally as features are built:
@@ -2715,12 +2792,13 @@ Before declaring the platform ready for private beta (end of Milestone 4, week 1
 - [ ] Phase 1: Signup, org creation, API keys, RLS, rate limiting, concurrent run enforcement, idempotency
 - [ ] Phase 2: defineAgent + defineTool work (string + capability class model syntax), agent runs with tools, guardrails enforced (including output validators), MCP stdio in local dev
 - [ ] Phase 3: SSE streaming, client SDK, sessions, OpenAI compat endpoint
-- [ ] Phase 4: 10 graders, eval experiments, baselines, CLI eval commands, CI integration
-- [ ] Phase 5: Knowledge bases, document upload, embeddings, hybrid retrieval, RAG
-- [ ] Phase 6: MCP client, encrypted secrets, tool policies, approval gates
-- [ ] Phase 6b: Connector catalog with 15 managed connectors, OAuth flows, dashboard browser
-- [ ] Phase 7: Environments, deploy, rollback, version diff, CLI auth + secrets
-- [ ] Phase 8: Dashboard home (populated), agent list, trace viewer, usage charts, sparklines, alerts (with data model), prompt diff viewer
+- [ ] Phase 3.5: Design tokens, sidebar, retroactive UI for Phases 1-3 (agent list, run list, trace viewer, settings)
+- [ ] Phase 4: 10 graders, eval experiments, baselines, CLI eval commands, CI integration + eval UI slice
+- [ ] Phase 5: Knowledge bases, document upload, embeddings, hybrid retrieval, RAG + KB upload UI
+- [ ] Phase 6: MCP client, encrypted secrets, tool policies, approval gates + tools UI
+- [ ] Phase 6b: Connector catalog with 15 managed connectors, OAuth flows, connector catalog UI + OAuth callback
+- [ ] Phase 7: Environments, deploy, rollback, version diff, CLI auth + secrets + deployment history UI + approval UI
+- [ ] Phase 8: Sparklines, usage dashboard, alerts, notifications, eval hub polish, "add to eval" dialog, dashboard home, billing page, dark mode polish
 - [ ] Phase 9: CLI polished, hot reload, logs tail (with backend SSE endpoint), CI/CD docs
 - [ ] Phase 10: Webhooks with signature verification and retry
 - [ ] Phase 11: Agent Git repos, Git transport, push hooks, CI pipeline workflow, PR eval comparison, pipeline dashboard
