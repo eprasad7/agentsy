@@ -99,6 +99,12 @@ const updateCaseSchema = z.object({
   expected_tool_calls: z.array(expectedToolCallSchema).nullable().optional(),
   expected_trajectory: z.array(trajectoryStepSchema).nullable().optional(),
   expected_approval_behavior: approvalExpectationSchema.nullable().optional(),
+  expected_citations: z.array(z.string()).nullable().optional(),
+  expected_memory_writes: z.array(z.object({
+    type: z.enum(['session_write', 'knowledge_update']),
+    key: z.string().optional(),
+    valueContains: z.string().optional(),
+  })).nullable().optional(),
   mocked_tool_results: z.array(mockedToolResultSchema).nullable().optional(),
   session_history: z.array(z.object({ role: z.string(), content: z.string() })).nullable().optional(),
   metadata: z.record(z.string(), z.unknown()).nullable().optional(),
@@ -182,6 +188,8 @@ function formatCase(c: typeof evalDatasetCases.$inferSelect) {
     expected_tool_calls: c.expectedToolCalls,
     expected_trajectory: c.expectedTrajectory,
     expected_approval_behavior: c.expectedApprovalBehavior,
+    expected_citations: c.expectedCitations,
+    expected_memory_writes: c.expectedMemoryWrites,
     mocked_tool_results: c.mockedToolResults,
     session_history: c.sessionHistory,
     metadata: c.metadata,
@@ -352,6 +360,8 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
         expectedToolCalls: body.expected_tool_calls ?? [],
         expectedTrajectory: body.expected_trajectory ?? [],
         expectedApprovalBehavior: body.expected_approval_behavior ?? null,
+        expectedCitations: body.expected_citations ?? [],
+        expectedMemoryWrites: body.expected_memory_writes ?? [],
         mockedToolResults: body.mocked_tool_results ?? [],
         sessionHistory: body.session_history ?? [],
         metadata: body.metadata ?? {},
@@ -414,6 +424,8 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
         expectedToolCalls: c.expected_tool_calls ?? [],
         expectedTrajectory: c.expected_trajectory ?? [],
         expectedApprovalBehavior: c.expected_approval_behavior ?? null,
+        expectedCitations: c.expected_citations ?? [],
+        expectedMemoryWrites: c.expected_memory_writes ?? [],
         mockedToolResults: c.mocked_tool_results ?? [],
         sessionHistory: c.session_history ?? [],
         metadata: c.metadata ?? {},
@@ -546,6 +558,12 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
       }
       if (body.expected_approval_behavior !== undefined) {
         updates['expectedApprovalBehavior'] = body.expected_approval_behavior;
+      }
+      if (body.expected_citations !== undefined) {
+        updates['expectedCitations'] = body.expected_citations ?? [];
+      }
+      if (body.expected_memory_writes !== undefined) {
+        updates['expectedMemoryWrites'] = body.expected_memory_writes ?? [];
       }
       if (body.mocked_tool_results !== undefined) {
         updates['mockedToolResults'] = body.mocked_tool_results ?? [];
@@ -681,6 +699,8 @@ export function evalCaseRoutes(app: FastifyInstance, db: DbClient): void {
         expectedToolCalls: body.expected_tool_calls ?? extractedToolCalls,
         mockedToolResults,
         expectedTrajectory: [],
+        expectedCitations: [],
+        expectedMemoryWrites: [],
         sessionHistory: [],
         metadata: { source_run_id: body.run_id },
         tags: ['from-run'],

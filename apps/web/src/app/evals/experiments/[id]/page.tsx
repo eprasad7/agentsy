@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { EvalComparison } from "@/components/eval-comparison";
 import { ScoreBadge } from "@/components/score-badge";
 import {
   apiClient,
@@ -267,6 +268,64 @@ export default function ExperimentDetailPage() {
               })}
             </tbody>
           </table>
+        )}
+      </div>
+
+      {/* Compare with another experiment */}
+      <CompareSection experimentId={experiment.id} />
+    </div>
+  );
+}
+
+function CompareSection({ experimentId }: { experimentId: string }) {
+  const [compareId, setCompareId] = useState("");
+  const [comparisonData, setComparisonData] = useState<Record<string, unknown> | null>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareError, setCompareError] = useState<string | null>(null);
+
+  async function handleCompare() {
+    if (!compareId.trim()) return;
+    setCompareLoading(true);
+    setCompareError(null);
+    try {
+      const data = await apiClient.evalExperiments.compare(experimentId, compareId.trim());
+      setComparisonData(data as Record<string, unknown>);
+    } catch (e: unknown) {
+      setCompareError(e instanceof ApiClientError ? e.message : "Comparison failed");
+    } finally {
+      setCompareLoading(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-surface-card">
+      <div className="border-b border-border px-4 py-3">
+        <h2 className="text-sm font-semibold text-text-primary">Compare Experiments</h2>
+      </div>
+      <div className="p-4">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="Enter experiment ID to compare (exp_...)"
+            value={compareId}
+            onChange={(e) => setCompareId(e.target.value)}
+            className="flex-1 rounded-lg border border-border bg-surface-page px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:border-primary-500 focus:outline-none"
+          />
+          <button
+            onClick={handleCompare}
+            disabled={compareLoading || !compareId.trim()}
+            className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700 disabled:opacity-50"
+          >
+            {compareLoading ? "Comparing..." : "Compare"}
+          </button>
+        </div>
+        {compareError && (
+          <p className="mt-2 text-sm text-error-600">{compareError}</p>
+        )}
+        {comparisonData && (
+          <div className="mt-4">
+            <EvalComparison data={comparisonData as unknown as Parameters<typeof EvalComparison>[0]["data"]} />
+          </div>
         )}
       </div>
     </div>

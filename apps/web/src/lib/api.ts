@@ -464,5 +464,8 @@ export const apiClient = {
     results(experimentId: string, params?: { limit?: string; cursor?: string }) {
       return request<CursorPage<EvalExperimentResult>>("GET", `/v1/eval/experiments/${experimentId}/results`, undefined, params);
     },
+    compare(experimentA: string, experimentB: string) {
+      return request<Record<string, unknown>>("GET", "/v1/eval/experiments/compare", undefined, { experiment_a: experimentA, experiment_b: experimentB });
+    },
   },
 } as const;

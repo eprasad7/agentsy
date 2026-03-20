@@ -64,8 +64,13 @@ export async function runEvalCommand(opts: EvalRunOptions): Promise<void> {
     parallelism: opts.parallelism,
   });
 
-  // Run experiment locally (uses built-in default runner)
-  const result = await agentsyEval.run(experiment);
+  // Run experiment
+  let result: ExperimentResult;
+  if (opts.remote) {
+    result = await runRemoteExperiment(experiment, config);
+  } else {
+    result = await agentsyEval.run(experiment);
+  }
 
   // Output results
   outputResults(result, opts.format);
@@ -216,4 +221,100 @@ async function resolveDataset(
   }
 
   return null;
+}
+
+/**
+ * Run an experiment remotely via the Agentsy API.
+ * Requires AGENTSY_API_KEY and AGENTSY_BASE_URL environment variables.
+ */
+async function runRemoteExperiment(
+  experiment: import('@agentsy/eval').ExperimentDefinition,
+  config: Record<string, unknown>,
+): Promise<ExperimentResult> {
+  const apiKey = process.env['AGENTSY_API_KEY'];
+  const baseUrl = process.env['AGENTSY_BASE_URL'] ?? 'https://api.agentsy.com';
+
+  if (!apiKey) {
+    console.error('AGENTSY_API_KEY is required for --remote mode. Set it in .env or as an environment variable.');
+    process.exit(1);
+  }
+
+  const agentSlug = (config.agent as Record<string, unknown> | undefined)?.slug as string | undefined
+    ?? (config as Record<string, unknown>).slug as string | undefined;
+
+  if (!agentSlug) {
+    console.error('Agent slug not found in config. Cannot run remote experiment.');
+    process.exit(1);
+  }
+
+  console.log(`Running remotely against ${baseUrl}...`);
+
+  // Create experiment via API
+  const headers = {
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  const createRes = await fetch(`${baseUrl}/v1/eval/experiments`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      agent_id: agentSlug,
+      version_id: 'latest',
+      dataset_id: typeof experiment.dataset === 'string' ? experiment.dataset : experiment.dataset.name,
+      graders: experiment.graders.map((g) => ({ name: g.name, type: g.type, config: g.config })),
+      tool_mode: experiment.toolMode ?? 'mock',
+      parallelism: experiment.parallelism ?? 5,
+    }),
+  });
+
+  if (!createRes.ok) {
+    const errBody = await createRes.text();
+    console.error(`Failed to create remote experiment: ${createRes.status} ${errBody}`);
+    process.exit(1);
+  }
+
+  const exp = await createRes.json() as { id: string; status: string };
+  console.log(`Experiment created: ${exp.id} (status: ${exp.status})`);
+
+  // Poll for completion
+  const timeout = 600_000; // 10 min
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    await new Promise((r) => setTimeout(r, 2_000));
+    const statusRes = await fetch(`${baseUrl}/v1/eval/experiments/${exp.id}`, { headers });
+    const status = await statusRes.json() as { status: string; summary_scores: Record<string, number>; total_cases: number; passed_cases: number; failed_cases: number; total_cost_usd: number; total_duration_ms: number };
+
+    if (['completed', 'failed'].includes(status.status)) {
+      // Fetch per-case results
+      const resultsRes = await fetch(`${baseUrl}/v1/eval/experiments/${exp.id}/results?limit=100`, { headers });
+      const results = await resultsRes.json() as { data: Array<{ output: string; scores: Record<string, unknown>; passed: boolean; duration_ms: number; cost_usd: number; error?: string }> };
+
+      return {
+        name: exp.id,
+        summaryScores: status.summary_scores,
+        totalCases: status.total_cases,
+        passedCases: status.passed_cases,
+        failedCases: status.failed_cases,
+        totalCostUsd: status.total_cost_usd,
+        totalDurationMs: status.total_duration_ms ?? 0,
+        caseResults: results.data.map((r, i) => ({
+          caseIndex: i,
+          input: '',
+          output: r.output ?? '',
+          scores: (r.scores ?? {}) as Record<string, import('@agentsy/eval').ScoreResult>,
+          passed: r.passed,
+          durationMs: r.duration_ms ?? 0,
+          costUsd: r.cost_usd ?? 0,
+          error: r.error,
+        })),
+      };
+    }
+
+    process.stdout.write('.');
+  }
+
+  console.error(`\nExperiment ${exp.id} timed out after ${timeout / 1000}s`);
+  process.exit(1);
 }
