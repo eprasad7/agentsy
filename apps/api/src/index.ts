@@ -16,7 +16,9 @@ import { healthRoutes } from './routes/health.js';
 import { onboardingRoutes } from './routes/onboarding.js';
 import { organizationRoutes, memberRoutes } from './routes/organizations.js';
 import { agentRoutes, agentVersionRoutes } from './routes/agents.js';
+import { runRoutes } from './routes/runs.js';
 import { secretRoutes } from './routes/secrets.js';
+import { initTemporalClient } from './lib/temporal.js';
 
 const app = Fastify({
   logger: {
@@ -79,6 +81,7 @@ async function start() {
     environmentRoutes(app, db);
     agentRoutes(app, db);
     agentVersionRoutes(app, db);
+    runRoutes(app, db);
 
     // Concurrent run limiter — only for run creation
     app.addHook('preHandler', async (request) => {
@@ -93,7 +96,12 @@ async function start() {
     });
   }
 
-  // 4. Start
+  // 4. Initialize Temporal client (non-blocking)
+  initTemporalClient().catch((err) => {
+    app.log.warn('Temporal client init failed (runs will fail):', err);
+  });
+
+  // 5. Start
   const port = Number(process.env['PORT'] ?? 3001);
   await app.listen({ port, host: '0.0.0.0' });
 }
