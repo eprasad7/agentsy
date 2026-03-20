@@ -55,6 +55,41 @@ export async function listSecrets(
     .where(eq(tenantSecrets.orgId, orgId));
 }
 
+export async function updateSecret(
+  db: DbClient,
+  orgId: string,
+  secretId: string,
+  newValue: string,
+  description?: string,
+) {
+  const encryptedValue = encrypt(newValue);
+  const [ivPart] = encryptedValue.split(':');
+
+  const updates: Record<string, unknown> = {
+    encryptedValue,
+    iv: ivPart!,
+    lastRotatedAt: new Date(),
+  };
+  if (description !== undefined) updates['description'] = description;
+
+  const result = await db
+    .update(tenantSecrets)
+    .set(updates)
+    .where(and(eq(tenantSecrets.id, secretId), eq(tenantSecrets.orgId, orgId)))
+    .returning({
+      id: tenantSecrets.id,
+      name: tenantSecrets.name,
+      key: tenantSecrets.key,
+      environment: tenantSecrets.environment,
+    });
+
+  if (!result.length) {
+    throw notFound('Secret not found');
+  }
+
+  return result[0];
+}
+
 export async function deleteSecret(db: DbClient, orgId: string, secretId: string) {
   const result = await db
     .delete(tenantSecrets)

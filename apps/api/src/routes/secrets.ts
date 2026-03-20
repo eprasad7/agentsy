@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
-import { createSecret, listSecrets, deleteSecret } from '../services/secrets.js';
+import { createSecret, listSecrets, updateSecret, deleteSecret } from '../services/secrets.js';
 
 const createSecretSchema = z.object({
   name: z.string().min(1).max(255),
@@ -48,6 +48,20 @@ export function secretRoutes(app: FastifyInstance, db: DbClient): void {
         created_at: s.createdAt.toISOString(),
       })),
     };
+  });
+
+  // PUT /v1/secrets/:id — update/rotate secret value
+  app.put<{ Params: { id: string } }>('/v1/secrets/:id', async (request) => {
+    const orgId = request.orgId!;
+
+    const updateSchema = z.object({
+      value: z.string().min(1),
+      description: z.string().optional(),
+    });
+    const body = updateSchema.parse(request.body);
+
+    const result = await updateSecret(db, orgId, request.params.id, body.value, body.description);
+    return result;
   });
 
   // DELETE /v1/secrets/:id

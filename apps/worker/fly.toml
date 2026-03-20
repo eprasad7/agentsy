@@ -6,6 +6,7 @@ primary_region = "iad"
 
 [env]
   NODE_ENV = "production"
+  TEMPORAL_TASK_QUEUE = "agentsy-agent-runs"
 
 # Worker has no HTTP service — it polls Temporal
 

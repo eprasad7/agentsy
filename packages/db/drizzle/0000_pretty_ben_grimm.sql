@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS vector;--> statement-breakpoint
+CREATE EXTENSION IF NOT EXISTS pg_trgm;--> statement-breakpoint
 CREATE TYPE "public"."alert_condition_type" AS ENUM('error_rate', 'latency_p95', 'cost_per_run', 'run_failure_count');--> statement-breakpoint
 CREATE TYPE "public"."approval_status" AS ENUM('pending', 'approved', 'denied');--> statement-breakpoint
 CREATE TYPE "public"."deployment_status" AS ENUM('active', 'superseded', 'rolled_back');--> statement-breakpoint

@@ -161,14 +161,27 @@ fly mpg attach agentsy-db --app agentsy-worker
 - The `launch-2` plan provides 2 vCPU / 4GB RAM / 40GB storage — sufficient for beta. Scale via `fly mpg update`.
 - pgvector is available as an extension — enable it in the post-deploy setup below.
 
-**Post-deploy setup** (connect via `fly mpg connect agentsy-db`):
+**Schema, extensions, RLS, and triggers** — applied from the repo (Drizzle):
+
+1. Set `DATABASE_URL` (Fly injects this after `fly mpg attach`; use the same URL locally when running migrate).
+2. From the monorepo root:
+
+```bash
+pnpm install
+export DATABASE_URL='postgresql://...'   # same secret the API uses
+pnpm --filter @agentsy/db db:migrate
+```
+
+Migration `0000` creates `vector` and `pg_trgm` before tables that need them. Migration `0001` adds `updated_at` / `knowledge_chunks` triggers and row-level security policies. Do not rely on hand-running `packages/db/src/rls.sql` / `triggers.sql`; those files point at the migration SQL.
+
+**Optional DBA tuning** (connect via `fly mpg connect agentsy-db` when supported; some managed offerings restrict `ALTER SYSTEM`):
 
 ```sql
--- Enable extensions
+-- Extensions are already ensured by migrations; safe to no-op if present
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
--- Configure for agent workloads
+-- Configure for agent workloads (only where your provider allows it)
 ALTER SYSTEM SET shared_buffers = '512MB';
 ALTER SYSTEM SET effective_cache_size = '1GB';
 ALTER SYSTEM SET work_mem = '16MB';

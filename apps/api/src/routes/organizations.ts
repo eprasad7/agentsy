@@ -1,4 +1,5 @@
 import { organizations, organizationMembers } from '@agentsy/db';
+import { newId } from '@agentsy/shared';
 import { eq, and, isNull } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -93,6 +94,77 @@ export function memberRoutes(app: FastifyInstance, db: DbClient): void {
       })),
     };
   });
+
+  // POST /v1/organization/members/invite (admin only)
+  app.post('/v1/organization/members/invite', async (request, reply) => {
+    const orgId = request.orgId!;
+
+    if (request.userRole && request.userRole !== 'admin') {
+      throw forbidden('Only admins can invite members');
+    }
+
+    const inviteSchema = z.object({
+      email: z.string().email(),
+      role: z.enum(['admin', 'member']).default('member'),
+    });
+    const body = inviteSchema.parse(request.body);
+
+    // Create a pending member record
+    // In production, this would also send an invite email with a token
+    const id = newId('mem');
+    await db.insert(organizationMembers).values({
+      id,
+      orgId,
+      userId: `pending:${body.email}`, // Placeholder until user accepts invite
+      role: body.role,
+    });
+
+    reply.status(201);
+    return {
+      id,
+      email: body.email,
+      role: body.role,
+      status: 'invited',
+    };
+  });
+
+  // PATCH /v1/organization/members/:id (admin only: role change)
+  app.patch<{ Params: { id: string } }>(
+    '/v1/organization/members/:id',
+    async (request) => {
+      const orgId = request.orgId!;
+
+      if (request.userRole && request.userRole !== 'admin') {
+        throw forbidden('Only admins can change member roles');
+      }
+
+      const roleSchema = z.object({
+        role: z.enum(['admin', 'member']),
+      });
+      const body = roleSchema.parse(request.body);
+
+      const result = await db
+        .update(organizationMembers)
+        .set({ role: body.role })
+        .where(
+          and(
+            eq(organizationMembers.id, request.params.id),
+            eq(organizationMembers.orgId, orgId),
+          ),
+        )
+        .returning();
+
+      if (!result.length) throw notFound('Member not found');
+
+      const m = result[0]!;
+      return {
+        id: m.id,
+        user_id: m.userId,
+        role: m.role,
+        created_at: m.createdAt.toISOString(),
+      };
+    },
+  );
 
   // DELETE /v1/organization/members/:id
   app.delete<{ Params: { id: string } }>(

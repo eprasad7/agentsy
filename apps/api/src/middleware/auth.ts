@@ -2,7 +2,7 @@ import { apiKeys, organizations } from '@agentsy/db';
 import { eq, and, isNull } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
-
+import type { Auth } from '../lib/auth.js';
 import type { DbClient } from '../lib/db.js';
 import { forbidden, unauthorized } from '../plugins/error-handler.js';
 import { hashApiKey } from '../services/api-keys.js';
@@ -24,24 +24,49 @@ function isPublicRoute(url: string): boolean {
   return PUBLIC_ROUTES.some((r) => url.startsWith(r));
 }
 
-export function registerAuthMiddleware(app: FastifyInstance, db: DbClient): void {
+export function registerAuthMiddleware(
+  app: FastifyInstance,
+  db: DbClient,
+  auth?: Auth,
+): void {
   app.addHook('onRequest', async (request: FastifyRequest, _reply: FastifyReply) => {
     if (isPublicRoute(request.url)) return;
 
     const authHeader = request.headers.authorization;
+
+    // Try API key auth first
+    if (authHeader) {
+      const token = authHeader.replace(/^Bearer\s+/i, '');
+      if (token.startsWith('sk-agentsy-')) {
+        await authenticateApiKey(request, db, token);
+        return;
+      }
+    }
+
+    // Try Better Auth session (cookie-based)
+    if (auth && request.headers.cookie) {
+      try {
+        const headers = new Headers();
+        for (const [key, val] of Object.entries(request.headers)) {
+          if (val) headers.set(key, Array.isArray(val) ? val.join(', ') : val);
+        }
+        const session = await auth.api.getSession({ headers });
+        if (session?.session && session?.user) {
+          request.userId = session.user.id;
+          request.authMethod = 'session';
+          // Session-based auth needs org resolution from the user's active organization
+          // This is handled by Better Auth's organization plugin
+          return;
+        }
+      } catch {
+        // Session auth failed, fall through
+      }
+    }
+
     if (!authHeader) {
       throw unauthorized();
     }
-
-    const token = authHeader.replace(/^Bearer\s+/i, '');
-
-    if (token.startsWith('sk-agentsy-')) {
-      await authenticateApiKey(request, db, token);
-    } else {
-      // Session auth will be handled by Better Auth in step 1.2
-      // For now, reject non-API-key tokens
-      throw unauthorized('Invalid authentication method');
-    }
+    throw unauthorized('Invalid authentication method');
   });
 }
 
