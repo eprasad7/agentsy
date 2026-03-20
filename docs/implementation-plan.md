@@ -11,7 +11,7 @@
 
 ### Total Phases
 
-11 phases (Phase 0-10), mapping to PRD Milestones 1-4 (weeks 1-16). Each phase builds on the previous. A developer should complete phases sequentially; some sub-tasks within a phase can be parallelized.
+12 phases (Phase 0-10 + Phase 6b), mapping to PRD Milestones 1-4 (weeks 1-16). Each phase builds on the previous. A developer should complete phases sequentially; some sub-tasks within a phase can be parallelized.
 
 ### Phase-to-Milestone Mapping
 
@@ -24,6 +24,7 @@
 | 4 | Eval Engine | Milestone 3 | 5-7 days |
 | 5 | Memory & Knowledge Base | Milestone 4 | 4-5 days |
 | 6 | Tool System & MCP | Milestone 4 | 3-4 days |
+| 6b | Connector Catalog | Milestone 4 | 5-7 days |
 | 7 | Deployment & Environments | Milestone 4 | 3-4 days |
 | 8 | Dashboard & Observability | Milestone 2-4 | 5-7 days |
 | 9 | CLI Polish & DX | Milestone 1-4 | 3-4 days |
@@ -42,7 +43,8 @@
 | J7 | Integrate via API & SDK | Phase 3 | Phase 2 |
 | J8 | Team Collaboration | Phase 1 | Phase 8 |
 | J9 | Knowledge Base & RAG | Phase 5 | Phase 9 |
-| J10 | Connect MCP Servers | Phase 6 | Phase 2 |
+| J10 | Connect MCP Servers | Phase 6 | Phase 2, 6b |
+| J17 | Connect via Connector Catalog | Phase 6b | Phase 8 |
 | J11 | LLM-as-Judge Evals | Phase 4 | - |
 | J12 | Add Failing Run to Eval Dataset | Phase 4 | Phase 8 |
 | J13 | Agent Dashboard Overview | Phase 8 | - |
@@ -137,7 +139,7 @@ Files to create:
 
 #### 0.5 Set up `@agentsy/db` with Drizzle schema and enum types
 
-**What**: Implement the full Postgres schema using Drizzle ORM, including all enum types and all 21 tables.
+**What**: Implement the full Postgres schema using Drizzle ORM, including all enum types and all 23 tables (21 core + 2 connector tables).
 **Spec reference**: spec-data-model.md sections 2 and 3 (all tables 3.1 through 3.21).
 **Journey**: Foundation for all data operations.
 **Acceptance criteria**: `drizzle-kit generate` produces SQL migration files. Schema compiles with correct TypeScript types.
@@ -165,6 +167,8 @@ Files to create:
 - `packages/db/src/schema/tenant-secrets.ts` -- Table 3.19 `tenant_secrets`
 - `packages/db/src/schema/webhooks.ts` -- Table 3.20 `webhooks`
 - `packages/db/src/schema/usage-daily.ts` -- Table 3.21 `usage_daily`
+- `packages/db/src/schema/connectors.ts` -- Table 3.22 `connectors` (platform-managed catalog)
+- `packages/db/src/schema/connector-connections.ts` -- Table 3.23 `connector_connections` (per-agent active connections with encrypted OAuth tokens)
 - `packages/db/src/schema/index.ts` -- Barrel export of all tables
 - `packages/db/src/index.ts` -- DB client factory (Postgres for prod, SQLite for dev)
 - `packages/db/drizzle.config.ts` -- Drizzle Kit configuration
@@ -1112,6 +1116,128 @@ Files to create:
 
 ---
 
+## Phase 6b: Connector Catalog (Journey 10, New)
+
+### Prerequisites
+- Phase 6 complete (MCP client, tool registry, secret resolver)
+
+### Steps
+
+#### 6b.1 Define connector data model
+
+**What**: Database tables for the connector catalog (registry of available connectors) and connector connections (per-agent active connections).
+**Spec reference**: PRD §5.11 (Connector Catalog), spec-api.md section 17.
+**Journey**: New connector journey (see user-journeys.md).
+**Acceptance criteria**: `connectors` table holds the catalog (seeded with 15 connectors). `connector_connections` table tracks active connections with encrypted OAuth tokens. Both tables have RLS policies.
+
+Files to create:
+- `packages/db/src/schema/connectors.ts` -- Table: `connectors` (id, name, slug, description, icon_url, category, auth_type, scopes, tools_manifest JSONB, status)
+- `packages/db/src/schema/connector-connections.ts` -- Table: `connector_connections` (id, connector_id FK, agent_id FK, org_id, environment, status, account_label, encrypted_access_token, encrypted_refresh_token, token_expires_at, last_used_at, metadata JSONB)
+- `packages/db/src/seeds/connector-catalog.ts` -- Seed the 15 starter connectors with their metadata and tool manifests
+
+#### 6b.2 Build connector MCP server framework
+
+**What**: A framework for creating connector MCP servers — each connector is a thin MCP server that wraps a service's REST API.
+**Spec reference**: PRD §5.11 ("Each connector is a hosted MCP server managed by Agentsy").
+**Journey**: Internal infrastructure.
+**Acceptance criteria**: A connector MCP server can be created by defining routes (API endpoints) and mapping them to MCP tools. The framework handles credential injection, error handling, and rate limiting.
+
+Files to create:
+- `packages/connector-sdk/src/framework.ts` -- Base connector class with tool registration, credential injection, and error handling
+- `packages/connector-sdk/src/types.ts` -- ConnectorDefinition, ConnectorTool, OAuthConfig types
+- `packages/connector-sdk/src/oauth.ts` -- OAuth 2.0 authorization code flow (authorization URL generation, token exchange, token refresh)
+- `packages/connector-sdk/package.json` -- Internal package `@agentsy/connector-sdk`
+
+#### 6b.3 Implement OAuth flow infrastructure
+
+**What**: Server-side OAuth 2.0 authorization code flow — generate auth URLs, handle callbacks, exchange codes for tokens, store encrypted tokens, auto-refresh.
+**Spec reference**: spec-api.md sections 17.2, 17.3, 17.8 (OAuth flow, callback, refresh).
+**Journey**: Connect a connector via dashboard.
+**Acceptance criteria**: `POST /v1/connectors/:id/connect` returns an authorization URL. OAuth callback exchanges the code, encrypts tokens in `connector_connections`, and redirects to dashboard. Token refresh runs automatically before expiry.
+
+Files to create:
+- `apps/api/src/routes/connectors.ts` -- Connector catalog listing (17.1), OAuth connect (17.2), callback (17.3), API key connect (17.4), list connections (17.5), get status (17.6), disconnect (17.7), refresh (17.8)
+- `apps/api/src/lib/oauth-client.ts` -- OAuth 2.0 client (authorization URL, token exchange, refresh)
+- `apps/worker/src/jobs/token-refresh.ts` -- Scheduled job to auto-refresh OAuth tokens before expiry
+
+#### 6b.4 Build starter connectors (15)
+
+**What**: Implement the 15 starter connector MCP servers.
+**Spec reference**: PRD §5.11 starter connector set.
+**Journey**: All connector journeys.
+**Acceptance criteria**: Each connector discovers its tools via the catalog. Each connector can execute tool calls using stored OAuth/API key credentials. All 15 connectors pass health checks.
+
+Files to create (one per connector):
+- `packages/connectors/gmail/` -- Gmail connector (read, send, search, draft)
+- `packages/connectors/slack/` -- Slack connector (send message, read channels, search)
+- `packages/connectors/google-drive/` -- Google Drive connector (list, read, search files)
+- `packages/connectors/google-calendar/` -- Google Calendar connector (list, create, update events)
+- `packages/connectors/notion/` -- Notion connector (search, read, create pages/databases)
+- `packages/connectors/linear/` -- Linear connector (issues, projects, comments)
+- `packages/connectors/github/` -- GitHub connector (repos, issues, PRs, files)
+- `packages/connectors/jira/` -- Jira connector (issues, projects, comments)
+- `packages/connectors/hubspot/` -- HubSpot connector (contacts, deals, companies)
+- `packages/connectors/salesforce/` -- Salesforce connector (records, queries, reports)
+- `packages/connectors/intercom/` -- Intercom connector (conversations, contacts, articles)
+- `packages/connectors/figma/` -- Figma connector (files, components, comments)
+- `packages/connectors/asana/` -- Asana connector (tasks, projects, sections)
+- `packages/connectors/stripe/` -- Stripe connector (customers, charges, subscriptions) — API key auth
+- `packages/connectors/postgresql/` -- PostgreSQL connector (query, schema inspection) — connection string auth
+
+#### 6b.5 Integrate connectors into agent tool registry
+
+**What**: When an agent has connected connectors, their tools appear in the unified tool registry alongside native tools and raw MCP tools.
+**Spec reference**: PRD R-11.10 ("No distinction between native and connector tools at runtime").
+**Journey**: Agent uses connector tools in runs.
+**Acceptance criteria**: `GET /v1/agents/:id/tools` returns connector tools merged with native tools. Agent runs can call connector tools seamlessly. Connector tool calls appear in run traces with connector attribution.
+
+Files to modify:
+- `apps/worker/src/tools/tool-registry.ts` -- Add connector tool source alongside native and MCP tools
+- `apps/worker/src/tools/connector-executor.ts` -- Execute connector tool calls by proxying to the hosted MCP server with decrypted credentials
+
+#### 6b.6 Implement connector dashboard UI
+
+**What**: Dashboard pages for browsing the connector catalog, connecting services, and managing connections.
+**Spec reference**: PRD R-11.8, user-journeys.md connector journey.
+**Journey**: Connect connectors via dashboard.
+**Acceptance criteria**: Connector catalog page shows all available connectors with icons, categories, and search. Click "Connect" starts OAuth flow. Connected connectors show status. Agent detail page shows assigned connectors.
+
+Files to create:
+- `apps/web/src/app/connectors/page.tsx` -- Connector catalog browser with search and category filters
+- `apps/web/src/app/connectors/callback/page.tsx` -- OAuth callback landing page
+- `apps/web/src/components/connector-card.tsx` -- Connector card with icon, name, status, connect/disconnect button
+- `apps/web/src/components/connector-assign-dialog.tsx` -- Dialog to assign connectors to agents
+
+#### 6b.7 Implement `agentsy connectors` CLI commands
+
+**What**: CLI commands for listing, connecting, and managing connectors.
+**Spec reference**: PRD R-11.9.
+**Journey**: Connect connectors via CLI.
+**Acceptance criteria**: `agentsy connectors list` shows available connectors. `agentsy connectors connect gmail --agent support-agent` opens browser for OAuth. `agentsy connectors status` shows connection health.
+
+Files to create:
+- `packages/cli/src/commands/connectors.ts` -- `agentsy connectors list|connect|disconnect|status` commands
+
+### Tests (Phase 6b)
+
+- **Unit**: `packages/connector-sdk/src/__tests__/framework.test.ts` -- Connector framework tool registration, credential injection
+- **Unit**: `apps/api/src/__tests__/oauth-client.test.ts` -- OAuth URL generation, token exchange, refresh
+- **Integration**: `apps/api/src/__tests__/connectors.test.ts` -- Catalog listing, OAuth flow, connection CRUD
+- **Integration**: `apps/worker/src/__tests__/connector-executor.test.ts` -- Connector tool execution with mocked credentials
+- **Integration**: `packages/connectors/gmail/__tests__/gmail.test.ts` -- Gmail connector tool execution (mocked API)
+- **E2E**: Connect Gmail connector to an agent, run agent, agent sends an email via Gmail tool
+
+### User Journey Verification
+
+- New connector journey: Browse catalog → connect Gmail → assign to agent → agent uses Gmail tools → trace shows connector tool calls
+- **J10 extension**: Connectors appear alongside manually configured MCP servers in agent tool list
+
+### Definition of Done
+
+- Demo: Browse connector catalog in dashboard. Click "Connect Gmail" → OAuth flow → redirected back. Assign Gmail to support agent. Agent run calls `gmail_search_emails` tool. Trace shows the connector tool call with credentials injected. `agentsy connectors status` shows "active" for Gmail.
+
+---
+
 ## Phase 7: Deployment & Environments (Journey 5)
 
 ### Prerequisites
@@ -1690,7 +1816,8 @@ The seed script (`packages/db/src/seed.ts`) should be expanded as tables are add
 - `src/tracing.ts` -- OTel SDK initialization (Phase 2+)
 
 ### `packages/db/`
-- `src/schema/*.ts` -- All 21 table definitions (Phase 0)
+- `src/schema/*.ts` -- All 23 table definitions (Phase 0)
+- `src/seeds/connector-catalog.ts` -- Seed 15 starter connectors (Phase 6b)
 - `src/client.ts` -- DB client factory (Phase 0)
 - `src/seed.ts` -- Development seed script (Phase 0+)
 - `src/rls.sql` -- RLS policies (Phase 0)
@@ -1707,6 +1834,28 @@ The seed script (`packages/db/src/seed.ts`) should be expanded as tables are add
 - `src/client.ts` -- `AgentsyClient` class (Phase 3)
 - `src/streaming.ts` -- SSE parser (Phase 3)
 - `src/types.ts` -- Client types (Phase 3)
+
+### `packages/connector-sdk/`
+- `src/framework.ts` -- Base connector class (Phase 6b)
+- `src/types.ts` -- ConnectorDefinition, ConnectorTool, OAuthConfig (Phase 6b)
+- `src/oauth.ts` -- OAuth 2.0 flow (Phase 6b)
+
+### `packages/connectors/`
+- `gmail/` -- Gmail connector MCP server (Phase 6b)
+- `slack/` -- Slack connector (Phase 6b)
+- `google-drive/` -- Google Drive connector (Phase 6b)
+- `google-calendar/` -- Google Calendar connector (Phase 6b)
+- `notion/` -- Notion connector (Phase 6b)
+- `linear/` -- Linear connector (Phase 6b)
+- `github/` -- GitHub connector (Phase 6b)
+- `jira/` -- Jira connector (Phase 6b)
+- `hubspot/` -- HubSpot connector (Phase 6b)
+- `salesforce/` -- Salesforce connector (Phase 6b)
+- `intercom/` -- Intercom connector (Phase 6b)
+- `figma/` -- Figma connector (Phase 6b)
+- `asana/` -- Asana connector (Phase 6b)
+- `stripe/` -- Stripe connector (Phase 6b)
+- `postgresql/` -- PostgreSQL connector (Phase 6b)
 
 ### `packages/eval/`
 - `src/types.ts` -- EvalCase, GraderConfig, ExperimentConfig (Phase 4)
@@ -1728,6 +1877,7 @@ The seed script (`packages/db/src/seed.ts`) should be expanded as tables are add
 - `src/commands/logs.ts` -- `agentsy logs` (Phase 9)
 - `src/commands/kb-create.ts` -- `agentsy kb create` (Phase 5)
 - `src/commands/kb-upload.ts` -- `agentsy kb upload` (Phase 5)
+- `src/commands/connectors.ts` -- `agentsy connectors list|connect|disconnect|status` (Phase 6b)
 - `src/dev/local-runner.ts` -- In-process agentic loop (Phase 2)
 - `src/dev/local-server.ts` -- Local Fastify server (Phase 2)
 - `src/dev/playground.ts` -- Local playground UI (Phase 2)
@@ -1772,6 +1922,8 @@ The seed script (`packages/db/src/seed.ts`) should be expanded as tables are add
 - `src/routes/alerts.ts` -- Alert rules (Phase 8)
 - `src/routes/notifications.ts` -- Notifications (Phase 8)
 - `src/routes/webhooks.ts` -- Webhook CRUD (Phase 10)
+- `src/routes/connectors.ts` -- Connector catalog and connection management (Phase 6b)
+- `src/lib/oauth-client.ts` -- OAuth 2.0 client (Phase 6b)
 - `src/streaming/sse-handler.ts` -- SSE handler (Phase 3)
 
 ### `apps/worker/`
@@ -1809,6 +1961,8 @@ The seed script (`packages/db/src/seed.ts`) should be expanded as tables are add
 - `src/jobs/alert-checker.ts` -- Alert condition evaluation (Phase 8)
 - `src/jobs/notification-sender.ts` -- Email/webhook notification delivery (Phase 8)
 - `src/jobs/webhook-delivery.ts` -- Webhook event delivery (Phase 10)
+- `src/jobs/token-refresh.ts` -- OAuth token auto-refresh (Phase 6b)
+- `src/tools/connector-executor.ts` -- Connector tool execution proxy (Phase 6b)
 
 ### `apps/web/`
 - `src/app/layout.tsx` -- Root layout with sidebar (Phase 1)
@@ -1844,6 +1998,8 @@ The seed script (`packages/db/src/seed.ts`) should be expanded as tables are add
 - `src/app/settings/billing/page.tsx` -- Billing/plan page (Phase 8)
 - `src/app/settings/alerts/page.tsx` -- Alert configuration (Phase 8)
 - `src/app/settings/webhooks/page.tsx` -- Webhook management (Phase 10)
+- `src/app/connectors/page.tsx` -- Connector catalog browser (Phase 6b)
+- `src/app/connectors/callback/page.tsx` -- OAuth callback page (Phase 6b)
 - `src/components/*.tsx` -- Shared UI components (Phases 1-10)
 - `src/lib/api.ts` -- Internal API client (Phase 1)
 - `tailwind.config.ts` -- Tailwind + design tokens (Phase 8)
@@ -1861,6 +2017,7 @@ Before declaring the platform ready for private beta (end of Milestone 4, week 1
 - [ ] Phase 4: 10 graders, eval experiments, baselines, CLI eval commands, CI integration
 - [ ] Phase 5: Knowledge bases, document upload, embeddings, hybrid retrieval, RAG
 - [ ] Phase 6: MCP client, encrypted secrets, tool policies, approval gates
+- [ ] Phase 6b: Connector catalog with 15 managed connectors, OAuth flows, dashboard browser
 - [ ] Phase 7: Environments, deploy, rollback, version diff, CLI auth + secrets
 - [ ] Phase 8: Dashboard with agent list, trace viewer, usage charts, sparklines, alerts
 - [ ] Phase 9: CLI polished, hot reload, logs tail, CI/CD docs

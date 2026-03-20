@@ -26,6 +26,7 @@
 14. [OpenAI-Compatible Endpoint](#14-openai-compatible-endpoint)
 15. [SSE Streaming Format](#15-sse-streaming-format)
 16. [Webhook Events](#16-webhook-events)
+17. [Connector Catalog](#17-connector-catalog)
 
 ---
 
@@ -4409,4 +4410,215 @@ await agentsy.deployments.create({
 // Usage
 const usage = await agentsy.usage.summary();
 const daily = await agentsy.usage.daily({ start_date: "2026-03-01", end_date: "2026-03-19" });
+
+// Connectors
+const catalog = await agentsy.connectors.catalog();
+const connection = await agentsy.connectors.connect("con_gmail", { agent_id: "ag_..." });
+const connections = await agentsy.connectors.list({ agent_id: "ag_..." });
+await agentsy.connectors.disconnect("conn_...");
+```
+
+---
+
+## 17. Connector Catalog
+
+Connectors are managed MCP server connections to external services. Agentsy hosts the MCP server, handles OAuth flows, and manages credential lifecycle. Connected services expose their tools automatically to the agent's tool registry.
+
+### 17.1 List Connector Catalog
+
+Returns the full catalog of available connectors with metadata.
+
+```
+GET /v1/connectors/catalog
+```
+
+**Query Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `category` | string | No | Filter by category (productivity, crm, dev_tools, communication, data, infrastructure) |
+| `search` | string | No | Search by name or description |
+
+**Response: `200 OK`**
+
+```typescript
+interface ConnectorCatalogResponse {
+  connectors: ConnectorDefinition[];
+}
+
+interface ConnectorDefinition {
+  id: string;                    // con_gmail, con_slack, etc.
+  name: string;                  // "Gmail"
+  description: string;           // "Read, send, and manage emails"
+  icon_url: string;              // URL to connector icon
+  category: string;              // "communication"
+  auth_type: "oauth2" | "api_key"; // How the connector authenticates
+  scopes?: string[];             // OAuth scopes requested
+  tools: ConnectorToolSummary[]; // Tools provided by this connector
+  status: "available" | "coming_soon" | "beta";
+}
+
+interface ConnectorToolSummary {
+  name: string;                  // "gmail_send_email"
+  description: string;           // "Send an email"
+  risk_level: "read" | "write" | "admin";
+}
+```
+
+### 17.2 Initiate Connector OAuth Flow
+
+Starts an OAuth authorization flow for a connector. Returns a URL to redirect the user to.
+
+```
+POST /v1/connectors/:connector_id/connect
+```
+
+**Request Body:**
+
+```typescript
+interface ConnectRequest {
+  agent_id: string;              // Agent to assign this connection to
+  environment?: string;          // "all" | "development" | "staging" | "production" (default: "all")
+  redirect_uri?: string;         // Where to redirect after OAuth completion (default: dashboard)
+}
+```
+
+**Response: `200 OK`**
+
+```typescript
+interface ConnectResponse {
+  authorization_url: string;     // Redirect user here to complete OAuth
+  state: string;                 // CSRF state token
+  connection_id: string;         // conn_... (pending until OAuth completes)
+}
+```
+
+### 17.3 OAuth Callback
+
+Internal endpoint — handles the OAuth callback from the external service. Not called directly by users.
+
+```
+GET /v1/connectors/callback
+```
+
+Exchanges the authorization code for tokens, encrypts and stores them in `tenant_secrets`, creates the connection record, and redirects to the dashboard.
+
+### 17.4 Connect via API Key
+
+For connectors that use API key auth (e.g., Stripe, PostgreSQL).
+
+```
+POST /v1/connectors/:connector_id/connect/api-key
+```
+
+**Request Body:**
+
+```typescript
+interface ApiKeyConnectRequest {
+  agent_id: string;
+  api_key: string;               // Encrypted in transit (TLS), stored encrypted at rest
+  environment?: string;          // Default: "all"
+  metadata?: Record<string, string>; // e.g., { host: "db.example.com", database: "mydb" }
+}
+```
+
+**Response: `201 Created`**
+
+```typescript
+interface ConnectionResponse {
+  id: string;                    // conn_...
+  connector_id: string;          // con_stripe
+  agent_id: string;
+  status: "active" | "expired" | "error";
+  connected_at: string;
+  tools: ConnectorToolSummary[];
+}
+```
+
+### 17.5 List Agent Connections
+
+Lists all active connector connections for an agent.
+
+```
+GET /v1/agents/:agent_id/connections
+```
+
+**Response: `200 OK`**
+
+```typescript
+interface ConnectionListResponse {
+  connections: ConnectionDetail[];
+}
+
+interface ConnectionDetail {
+  id: string;                    // conn_...
+  connector_id: string;          // con_gmail
+  connector_name: string;        // "Gmail"
+  agent_id: string;
+  environment: string;
+  status: "active" | "expired" | "error";
+  connected_at: string;
+  last_used_at: string | null;
+  account_label?: string;        // "john@acme.com" (display only, from OAuth profile)
+  tools: ConnectorToolSummary[];
+}
+```
+
+### 17.6 Get Connection Status
+
+Check health/status of a specific connection.
+
+```
+GET /v1/connections/:connection_id
+```
+
+**Response: `200 OK`**
+
+Returns a `ConnectionDetail` with additional `health_check` field:
+
+```typescript
+interface ConnectionStatusResponse extends ConnectionDetail {
+  health_check: {
+    status: "healthy" | "token_expired" | "auth_revoked" | "service_error";
+    last_checked_at: string;
+    error_message?: string;
+  };
+}
+```
+
+### 17.7 Disconnect
+
+Removes a connector connection, revokes OAuth tokens, and cleans up stored credentials.
+
+```
+DELETE /v1/connections/:connection_id
+```
+
+**Response: `200 OK`**
+
+```typescript
+interface DisconnectResponse {
+  id: string;
+  status: "disconnected";
+  disconnected_at: string;
+}
+```
+
+### 17.8 Refresh Connection
+
+Force-refreshes OAuth tokens for a connection.
+
+```
+POST /v1/connections/:connection_id/refresh
+```
+
+**Response: `200 OK`**
+
+```typescript
+interface RefreshResponse {
+  id: string;
+  status: "active";
+  refreshed_at: string;
+  expires_at: string;
+}
 ```

@@ -87,7 +87,7 @@ Companies come to Agentsy to build, test, and run agents without worrying about 
 The requirements below are organized into **Beta Core** (the narrowest slice for private beta — weeks 1-12) and **P0 Remainder** (still P0, ships in weeks 13-16 before P1). The beta core is: runtime + tools + evals + basic observability. Memory, knowledge bases, secrets vault, MCP remote, deployment controls, and multi-tenancy hardening ship in the P0 remainder.
 
 **Beta Core (Milestones 1-3)**: Runtime engine, native tools, eval engine, trace viewer, CLI, basic dashboard, API.
-**P0 Remainder (Milestone 4)**: Memory/sessions, knowledge bases, secrets, MCP remote, versioning, environments, rate limiting, team management.
+**P0 Remainder (Milestone 4)**: Memory/sessions, knowledge bases, secrets, MCP remote, versioning, environments, rate limiting, team management, connector catalog (15 managed integrations).
 
 This separation means beta users can define agents, connect tools, run evals, and deploy — the full reliability loop — without waiting for every platform feature.
 
@@ -315,6 +315,65 @@ Instead of hardcoding model SKUs (which change every few months), we define **pr
 
 > **Why this matters**: Between Jan–Mar 2026 alone, both Anthropic and OpenAI shipped new model versions. Hardcoding SKUs in agent configs means every agent breaks on provider updates. Capability classes decouple agent intent from model identity.
 
+### 5.11 Connector Catalog
+
+**The integration marketplace** — managed connections to external services so agents can interact with the tools teams already use.
+
+**User story**: *As a developer, I browse a catalog of pre-built connectors, click "Connect" on Gmail, complete an OAuth flow, and my agent can immediately read and send emails — no MCP server configuration needed.*
+
+**Architecture**: Each connector is a **hosted MCP server** managed by Agentsy. The connector catalog wraps MCP with:
+1. **Managed OAuth flows** — user clicks "Connect", completes OAuth, credentials stored in `tenant_secrets` automatically
+2. **Hosted MCP servers** — Agentsy runs the MCP server, user doesn't need to host anything
+3. **Per-agent scoping** — connectors are assigned to specific agents, not globally available
+4. **Tool discovery** — connected services expose their tools automatically to the agent's tool registry
+
+**Requirements**:
+
+| ID | Requirement | Priority | Notes |
+|----|-------------|----------|-------|
+| R-11.1 | Connector catalog registry with metadata (name, icon, description, category, auth type) | P0 | Platform-managed list of available connectors |
+| R-11.2 | OAuth 2.0 flow for connectors (authorization code grant) | P0 | Redirect-based flow, credentials auto-stored in `tenant_secrets` |
+| R-11.3 | API key auth flow for connectors that don't support OAuth | P0 | Simple key entry, encrypted storage |
+| R-11.4 | Per-agent connector assignment (agent X uses Gmail, Slack; agent Y uses GitHub, Jira) | P0 | Connectors are not org-wide — each agent explicitly selects which connectors it uses |
+| R-11.5 | Connector health check and status display | P0 | Show "Connected" / "Expired" / "Error" status per connector |
+| R-11.6 | OAuth token refresh handling | P0 | Auto-refresh expired tokens, alert on refresh failure |
+| R-11.7 | Connector disconnect and credential cleanup | P0 | Remove OAuth tokens and disconnect cleanly |
+| R-11.8 | Dashboard connector browser with search and categories | P0 | Categories: Productivity, CRM, Dev Tools, Communication, Data, etc. |
+| R-11.9 | CLI connector management: `agentsy connectors list`, `agentsy connectors connect <name>` | P0 | Opens browser for OAuth, returns to CLI on completion |
+| R-11.10 | Connector tools appear in agent tool registry alongside native tools | P0 | Unified tool list — no distinction between native and connector tools at runtime |
+
+**Starter Connector Set (15 connectors for P0)**:
+
+| Category | Connectors | Auth Type |
+|----------|-----------|-----------|
+| **Communication** | Gmail, Slack | OAuth 2.0 |
+| **Productivity** | Google Drive, Google Calendar, Notion, Asana | OAuth 2.0 |
+| **Dev Tools** | GitHub, Linear, Jira (Atlassian), Figma | OAuth 2.0 |
+| **CRM / Sales** | HubSpot, Salesforce, Intercom | OAuth 2.0 |
+| **Infrastructure** | Stripe, PostgreSQL | OAuth 2.0 / API Key |
+
+> **Build vs. Buy**: Each connector is a thin adapter — an MCP server that wraps the service's REST API. We build the OAuth plumbing once and use it for all connectors. The MCP server for each connector is typically 200-500 lines of TypeScript. Community contributions welcome after beta.
+
+> **Expansion path**: P1 adds 30+ more connectors based on beta user demand. P2 opens a connector SDK so users can build and publish their own connectors.
+
+### 5.12 Agent Skills (P2)
+
+**Skills are composable agent capabilities** — reusable packages that combine a prompt template, required connectors, tool configurations, and guardrails into a single building block.
+
+**User story**: *As a developer, I browse a skill library, add "Email Triage" to my agent, and it immediately knows how to categorize, summarize, and draft replies to emails — using the Gmail connector I already connected.*
+
+**P2 scope** (not built in P0):
+
+| ID | Requirement | Priority | Notes |
+|----|-------------|----------|-------|
+| R-12.1 | Skill definition format: prompt fragment + required connectors + tool config + guardrails | P2 | `defineSkill()` in SDK |
+| R-12.2 | Skill composition: agents can use multiple skills simultaneously | P2 | Skills merge into the agent's system prompt and tool set |
+| R-12.3 | Skill library with Agentsy-curated starter skills | P2 | 10-15 starter skills: email triage, document summarization, meeting scheduler, code review, ticket routing, etc. |
+| R-12.4 | Skill marketplace for community contributions | P2 | Users can publish and share skills |
+| R-12.5 | Skill dependency resolution: skill declares required connectors, platform validates they're connected | P2 | "Email Triage" requires Gmail connector |
+
+> **Why P2, not P0**: Skills are a convenience layer on top of connectors + tools + prompts. The underlying primitives must be solid first. P0 ships connectors; P1 validates they work at scale; P2 adds the composability layer.
+
 ---
 
 ## 6. What We're NOT Building (P0) — and When
@@ -360,7 +419,7 @@ The architecture is genuinely different: WebRTC, voice activity detection, inter
 | Mobile SDK | Web and API first. Mobile SDKs when we see mobile use cases. | P2 |
 | Self-hosted / on-prem | Cloud-only for beta. Self-hosted is an enterprise tier feature. | P3 |
 | Prompt optimization (DSPy-style) | Interesting but not core. Users optimize manually first. | P2 |
-| Built-in integrations (Slack, GitHub) | Users bring MCP servers. We curate a starter set in P1. | P1 |
+| Agent Skills (composable capabilities) | Skills = prompt template + connectors + tools packaged as reusable building blocks. Needs connector catalog first. | P2 |
 
 ---
 
@@ -642,8 +701,10 @@ These resolve contradictions the audit found across our doc suite.
 - [ ] Instant rollback to previous version
 - [ ] Rate limiting (requests/min + tokens/day)
 - [ ] Invite team members, role-based access
+- [ ] Connector Catalog: managed MCP connectors with OAuth flows and one-click setup (see §5.11)
+- [ ] Starter connector set: 15 connectors (Gmail, Slack, Google Drive, Notion, Linear, GitHub, Jira, HubSpot, Salesforce, Stripe, PostgreSQL, Google Calendar, Intercom, Figma, Asana)
 
-**Demo**: Full production workflow — agent with knowledge base, connected tools, eval suite, deployed with versioning and rollback.
+**Demo**: Full production workflow — agent with knowledge base, connected tools via connector catalog, eval suite, deployed with versioning and rollback.
 
 ### Milestone 5: "Open the Door" (Weeks 17-20) — P1
 
@@ -654,7 +715,7 @@ These resolve contradictions the audit found across our doc suite.
 - [ ] Visual builder generates same agent config that SDK produces (one engine, two interfaces)
 - [ ] Agent playground in dashboard: chat with your agent, see traces live
 - [ ] Billing integration (Stripe): usage-based with credit tiers
-- [ ] Starter MCP server gallery (curated list of 10-15 popular MCP servers with one-click connect)
+- [ ] Starter MCP server gallery (curated list beyond the P0 connector catalog)
 - [ ] Production sampling: auto-score X% of live traffic with LLM-as-judge
 - [ ] Human annotation queue: flag runs for review, collect labels, grow golden datasets
 - [ ] Hot reload in `agentsy dev` (prompt changes apply without restart)

@@ -56,6 +56,8 @@ All primary keys use **prefixed nanoid** strings. This provides:
 | knowledge_chunks | `kc_` | `kc_hT7cF3nM8jLz` |
 | secrets | `sec_` | `sec_xW6bN4kP7vRm` |
 | usage_daily | `usg_` | `usg_qJ8tY5cF2hNx` |
+| connectors | `con_` | `con_gmail` |
+| connector_connections | `conn_` | `conn_qJ8tY5cF2hNx` |
 
 ### Nanoid Generator
 
@@ -1410,6 +1412,75 @@ export const usageDaily = pgTable(
 
 **RLS**: `org_id = current_setting('app.org_id')`.
 
+### 3.22 connectors
+
+Platform-managed connector catalog. Seeded by Agentsy, not user-created.
+
+```typescript
+export const connectors = pgTable("connectors", {
+  id: text("id").primaryKey(),                    // con_gmail, con_slack, etc.
+  name: text("name").notNull(),                   // "Gmail"
+  slug: text("slug").notNull().unique(),           // "gmail"
+  description: text("description").notNull(),      // "Read, send, and manage emails"
+  iconUrl: text("icon_url"),                       // URL to connector icon
+  category: text("category").notNull(),            // "communication" | "productivity" | "dev_tools" | "crm" | "infrastructure"
+  authType: text("auth_type").notNull(),           // "oauth2" | "api_key"
+  oauthConfig: jsonb("oauth_config"),              // OAuthConfig: { authorizationUrl, tokenUrl, scopes, clientIdEnvVar, clientSecretEnvVar }
+  toolsManifest: jsonb("tools_manifest").notNull(), // Array of { name, description, riskLevel, inputSchema }
+  status: text("status").notNull().default("available"), // "available" | "coming_soon" | "beta"
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+```
+
+**RLS**: No RLS — this is a platform-wide catalog, readable by all authenticated users.
+
+**OAuthConfig JSONB type:**
+```typescript
+interface OAuthConfig {
+  authorization_url: string;     // e.g., "https://accounts.google.com/o/oauth2/v2/auth"
+  token_url: string;             // e.g., "https://oauth2.googleapis.com/token"
+  scopes: string[];              // e.g., ["https://www.googleapis.com/auth/gmail.modify"]
+  client_id_env_var: string;     // Name of Fly secret holding client ID (e.g., "GMAIL_CLIENT_ID")
+  client_secret_env_var: string; // Name of Fly secret holding client secret
+}
+```
+
+### 3.23 connector_connections
+
+Active connections between connectors and agents. One per connector per agent.
+
+```typescript
+export const connectorConnections = pgTable(
+  "connector_connections",
+  {
+    id: text("id").primaryKey(),                    // conn_...
+    connectorId: text("connector_id").notNull().references(() => connectors.id),
+    agentId: text("agent_id").notNull().references(() => agents.id, { onDelete: "cascade" }),
+    orgId: text("org_id").notNull().references(() => organizations.id),
+    environment: text("environment").notNull().default("all"), // "all" | "development" | "staging" | "production"
+    status: text("status").notNull().default("pending"), // "pending" | "active" | "expired" | "error" | "disconnected"
+    accountLabel: text("account_label"),             // Display label from OAuth profile (e.g., "john@acme.com")
+    encryptedAccessToken: text("encrypted_access_token"), // AES-256-GCM encrypted
+    iv: text("iv"),                                  // Initialization vector for AES-256-GCM
+    encryptedRefreshToken: text("encrypted_refresh_token"),
+    refreshIv: text("refresh_iv"),
+    tokenExpiresAt: timestamp("token_expires_at"),   // When the access token expires
+    lastUsedAt: timestamp("last_used_at"),
+    metadata: jsonb("metadata"),                     // Connector-specific metadata (e.g., { host, database } for PostgreSQL)
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("connector_conn_agent_connector_idx").on(table.agentId, table.connectorId, table.environment),
+    index("connector_conn_org_idx").on(table.orgId),
+    index("connector_conn_expires_idx").on(table.tokenExpiresAt),
+  ]
+);
+```
+
+**RLS**: `org_id = current_setting('app.org_id')`.
+
 ---
 
 ## 4. ER Diagram
@@ -1429,6 +1500,9 @@ erDiagram
     agents ||--o{ runs : "executions"
     agents ||--o{ knowledge_bases : "has KB"
     agents ||--o{ eval_baselines : "has baselines"
+    agents ||--o{ connector_connections : "uses connectors"
+
+    connectors ||--o{ connector_connections : "connected as"
 
     agent_versions ||--o{ deployments : "deployed as"
     agent_versions ||--o{ runs : "executed as"

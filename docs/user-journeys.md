@@ -1260,6 +1260,142 @@ Dashboard shows a notification bell with unread count:
 
 ---
 
+## Journey 17: Connect via Connector Catalog
+
+### Goal
+Developer browses managed connectors, connects an external service via OAuth, assigns it to an agent, and the agent uses the service's tools automatically.
+
+### Steps
+
+**17.1 — Browse the connector catalog**
+
+```
+Dashboard: Connectors → Browse Catalog
+┌──────────────────────────────────────────────────────────┐
+│  Connector Catalog                          [Search...  ] │
+├──────────────────────────────────────────────────────────┤
+│  Categories: All  Communication  Productivity  Dev Tools  │
+│              CRM/Sales  Infrastructure                    │
+│                                                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │
+│  │ 📧 Gmail    │  │ 💬 Slack    │  │ 📁 Google   │       │
+│  │ Read, send  │  │ Messages,   │  │    Drive    │       │
+│  │ & manage    │  │ channels,   │  │ Files,      │       │
+│  │ emails      │  │ search      │  │ search      │       │
+│  │             │  │             │  │             │       │
+│  │ [Connect →] │  │ [Connect →] │  │ [Connect →] │       │
+│  └─────────────┘  └─────────────┘  └─────────────┘       │
+│                                                           │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │
+│  │ 📝 Notion   │  │ 🔀 GitHub   │  │ 📊 Linear   │       │
+│  │ Pages, DBs, │  │ Repos, PRs, │  │ Issues,     │       │
+│  │ search      │  │ issues      │  │ projects    │       │
+│  │ [Connect →] │  │ [Connect →] │  │ [Connect →] │       │
+│  └─────────────┘  └─────────────┘  └─────────────┘       │
+│                                                           │
+│  ... 15 connectors available                              │
+└──────────────────────────────────────────────────────────┘
+```
+
+**17.2 — Connect a service (OAuth)**
+
+```
+Click "Connect" on Gmail →
+  Browser redirects to accounts.google.com
+  → User selects Google account
+  → Reviews scopes: "Read, send, and manage email"
+  → Clicks "Allow"
+  → Redirected back to app.agentsy.com/connectors/callback
+  → Dashboard shows: ✅ Gmail connected (john@acme.com)
+```
+
+Or via CLI:
+```bash
+agentsy connectors connect gmail --agent support-agent
+# Opening browser for Gmail authorization...
+# ✅ Gmail connected as john@acme.com
+# Tools available: gmail_search, gmail_read, gmail_send, gmail_draft
+```
+
+**17.3 — Assign connector to an agent**
+
+```
+Dashboard: Agents → support-agent → Tools
+┌─────────────────────────────────────────────────────┐
+│  Tools for: support-agent                           │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  NATIVE TOOLS                                       │
+│  ✅ get_order         read     Auto-approve         │
+│  ✅ get_refund_policy read     Auto-approve         │
+│  ✅ issue_refund      write    Requires approval    │
+│                                                     │
+│  CONNECTED SERVICES           [+ Add Connector]     │
+│  ✅ 📧 Gmail (john@acme.com)     Active             │
+│     • gmail_search    read     Auto-approve          │
+│     • gmail_read      read     Auto-approve          │
+│     • gmail_send      write    Requires approval     │
+│     • gmail_draft     write    Auto-approve          │
+│                                                     │
+│  ✅ 💬 Slack (Acme Corp)         Active             │
+│     • slack_send      write    Requires approval     │
+│     • slack_search    read     Auto-approve          │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
+
+**17.4 — Agent uses connector tools in a run**
+
+User sends: "Find the last email from jane@customer.com about order ORD-12345 and draft a reply with the refund status"
+
+Agent run trace:
+```
+Step 1: LLM Call (Claude Sonnet)
+  → Agent decides to search emails first
+
+Step 2: Tool Call: gmail_search
+  → query: "from:jane@customer.com order ORD-12345"
+  → result: { messages: [{ id: "msg_123", subject: "Refund request", ... }] }
+
+Step 3: Tool Call: gmail_read
+  → message_id: "msg_123"
+  → result: { body: "Hi, I'd like a refund for order ORD-12345..." }
+
+Step 4: Tool Call: get_order
+  → orderId: "ORD-12345"
+  → result: { status: "shipped", total: 89.99 }
+
+Step 5: Tool Call: gmail_draft
+  → to: "jane@customer.com"
+  → subject: "Re: Refund request"
+  → body: "Hi Jane, I've looked into order ORD-12345..."
+
+Step 6: LLM Call (final response)
+  → "I found Jane's email about order ORD-12345. The order is currently
+     shipped with a total of $89.99. I've drafted a reply explaining the
+     refund status. Would you like me to send it?"
+```
+
+**17.5 — Manage connections**
+
+```bash
+agentsy connectors status
+# ┌────────────┬──────────────┬────────┬────────────┐
+# │ Connector  │ Account      │ Status │ Last Used  │
+# ├────────────┼──────────────┼────────┼────────────┤
+# │ Gmail      │ john@acme    │ Active │ 2 min ago  │
+# │ Slack      │ Acme Corp    │ Active │ 1 hour ago │
+# │ GitHub     │ acme-org     │ Active │ 3 days ago │
+# └────────────┴──────────────┴────────┴────────────┘
+
+agentsy connectors disconnect gmail
+# ⚠ This will remove Gmail access for all agents using it.
+# Continue? (y/N) y
+# ✅ Gmail disconnected. OAuth tokens revoked.
+```
+
+---
+
 ## Journey Summary
 
 | Journey | Primary Surface | Key Screens / Commands |
@@ -1280,3 +1416,4 @@ Dashboard shows a notification bell with unread count:
 | 14. Fallback Model Config | CLI + Dashboard | Agent config, trace viewer |
 | 15. CI/CD Integration | CLI + GitHub Actions | `agentsy eval run --ci` |
 | 16. Alerting & Notifications | Dashboard | Settings → Alerts, notification bell |
+| 17. Connector Catalog | Dashboard + CLI | Connectors → Browse, `agentsy connectors` |
