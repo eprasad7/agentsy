@@ -4,8 +4,10 @@ import { runAgent } from './local-runner.js';
 
 /**
  * Start an interactive terminal REPL for chatting with the agent.
+ * Takes a getter function so hot-reloaded config is always used.
  */
-export function startRepl(config: AgentConfig): void {
+export function startRepl(getConfig: () => AgentConfig): void {
+  const config = getConfig();
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -24,7 +26,9 @@ export function startRepl(config: AgentConfig): void {
     }
 
     try {
-      const result = await runAgent(config, input);
+      // Always use latest config via getter
+      const currentConfig = getConfig();
+      const result = await runAgent(currentConfig, input);
 
       console.log(`\nAgent: ${result.output}`);
       console.log(

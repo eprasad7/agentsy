@@ -2,8 +2,10 @@ import { generateText, jsonSchema } from 'ai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { estimateCost, GUARDRAIL_DEFAULTS } from '@agentsy/shared';
-import type { AgentConfig, NativeToolDefinition, ToolContext } from '@agentsy/sdk';
+import type { AgentConfig, NativeToolDefinition, McpToolDefinition, ToolContext } from '@agentsy/sdk';
 import { zodToJsonSchema } from '@agentsy/sdk';
+
+import { McpStdioClient } from './mcp-stdio-client.js';
 
 export interface RunResult {
   output: string;
@@ -25,6 +27,70 @@ export interface RunStep {
   costUsd?: number;
 }
 
+// ── MCP Client Cache ────────────────────────────────────────────────
+
+const mcpClients = new Map<string, McpStdioClient>();
+const mcpToolMap = new Map<string, { client: McpStdioClient; serverName: string }>();
+const mcpToolDefs = new Map<string, unknown>();
+
+/**
+ * Initialize MCP stdio clients for all MCP tool definitions.
+ * Discovers tools and populates the tool map.
+ */
+export async function initMcpTools(config: AgentConfig): Promise<{
+  toolDefs: Record<string, unknown>;
+}> {
+  const toolDefs: Record<string, unknown> = {};
+  const mcpTools = (config.tools ?? []).filter(
+    (t): t is McpToolDefinition => t.type === 'mcp',
+  );
+
+  for (const mcp of mcpTools) {
+    if (mcp.transport !== 'stdio') continue;
+
+    try {
+      let client = mcpClients.get(mcp.name);
+      if (!client) {
+        // Parse command — serverUrl can be "./server.js" or "node server.js"
+        const parts = mcp.serverUrl.split(' ');
+        const command = parts[0]!;
+        const args = parts.slice(1);
+        client = new McpStdioClient(command, args);
+        await client.connect();
+        mcpClients.set(mcp.name, client);
+      }
+
+      const tools = await client.listTools();
+      for (const tool of tools) {
+        const def = {
+          description: tool.description ?? tool.name,
+          parameters: tool.inputSchema ? jsonSchema(tool.inputSchema) : jsonSchema({ type: 'object', properties: {} }),
+        };
+        mcpToolDefs.set(tool.name, def);
+        mcpToolMap.set(tool.name, { client, serverName: mcp.name });
+      }
+
+      console.log(`  MCP "${mcp.name}": ${tools.length} tools discovered`);
+    } catch (err) {
+      console.error(`  MCP "${mcp.name}" failed to connect: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { toolDefs };
+}
+
+/**
+ * Disconnect all MCP clients.
+ */
+export function disconnectMcpClients(): void {
+  for (const [, client] of mcpClients) {
+    client.disconnect();
+  }
+  mcpClients.clear();
+  mcpToolMap.clear();
+  mcpToolDefs.clear();
+}
+
 /**
  * In-process agentic loop — same logic as the Temporal AgentRunWorkflow
  * but using async/await instead of activities.
@@ -41,11 +107,9 @@ export async function runAgent(config: AgentConfig, input: string): Promise<RunR
 
   // Resolve model
   const model = typeof config.model === 'string' ? config.model : 'claude-sonnet-4';
-
-  // Create AI SDK model
   const aiModel = createAiModel(model);
 
-  // Build tool definitions
+  // Build native tool definitions
   const nativeTools = (config.tools ?? []).filter(
     (t): t is NativeToolDefinition => t.type === 'native',
   );
@@ -62,7 +126,14 @@ export async function runAgent(config: AgentConfig, input: string): Promise<RunR
     toolFns[tool.name] = tool.execute;
   }
 
-  // Build messages
+  // Add MCP tool definitions so LLM knows about them
+  for (const [toolName, def] of mcpToolDefs) {
+    if (!toolDefs[toolName]) {
+      toolDefs[toolName] = def;
+    }
+  }
+
+  // Build system prompt
   const systemPrompt = typeof config.systemPrompt === 'string'
     ? config.systemPrompt
     : await config.systemPrompt({
@@ -79,7 +150,6 @@ export async function runAgent(config: AgentConfig, input: string): Promise<RunR
   let totalTokensOut = 0;
   let totalCost = 0;
 
-  // Create tool context for execute functions
   const toolContext: ToolContext = {
     getSecret: async () => { throw new Error('Secrets not available in local dev'); },
     runId: `local_${Date.now()}`,
@@ -94,7 +164,6 @@ export async function runAgent(config: AgentConfig, input: string): Promise<RunR
 
   // Agentic loop
   for (let iteration = 0; iteration < maxIterations; iteration++) {
-    // Guardrail checks
     if (totalTokensIn + totalTokensOut >= maxTokens) break;
     if (totalCost >= maxCostUsd) break;
     if (Date.now() - startTime >= timeoutMs) break;
@@ -120,15 +189,8 @@ export async function runAgent(config: AgentConfig, input: string): Promise<RunR
     totalTokensOut += tokensOut;
     totalCost += cost;
 
-    steps.push({
-      type: 'llm_call',
-      model,
-      tokensIn,
-      tokensOut,
-      costUsd: cost,
-    });
+    steps.push({ type: 'llm_call', model, tokensIn, tokensOut, costUsd: cost });
 
-    // No tool calls → final response
     if (!result.toolCalls?.length) {
       return {
         output: result.text ?? '',
@@ -140,14 +202,32 @@ export async function runAgent(config: AgentConfig, input: string): Promise<RunR
       };
     }
 
-    // Execute tool calls
     messages.push({ role: 'assistant', content: result.text || '' });
 
     for (const tc of result.toolCalls) {
       const toolName = tc.toolName;
       const args = (tc as unknown as Record<string, unknown>)['args'] as Record<string, unknown> ?? {};
-      const executeFn = toolFns[toolName];
 
+      console.log(`  [tool] ${toolName}(${JSON.stringify(args)})`);
+
+      // Check if this is an MCP tool
+      const mcpEntry = mcpToolMap.get(toolName);
+      if (mcpEntry) {
+        try {
+          const mcpResult = await mcpEntry.client.callTool(toolName, args);
+          const resultStr = typeof mcpResult === 'string' ? mcpResult : JSON.stringify(mcpResult);
+          console.log(`  → ${resultStr.slice(0, 200)}`);
+          steps.push({ type: 'tool_call', toolName, toolArgs: args, toolResult: resultStr });
+          messages.push({ role: 'tool', content: resultStr, toolCallId: tc.toolCallId });
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err);
+          messages.push({ role: 'tool', content: `Error: ${errMsg}`, toolCallId: tc.toolCallId });
+        }
+        continue;
+      }
+
+      // Native tool
+      const executeFn = toolFns[toolName];
       if (!executeFn) {
         messages.push({
           role: 'tool',
@@ -157,38 +237,19 @@ export async function runAgent(config: AgentConfig, input: string): Promise<RunR
         continue;
       }
 
-      console.log(`  [tool] ${toolName}(${JSON.stringify(args)})`);
-
       try {
         const toolResult = await executeFn(args, toolContext);
         const resultStr = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult);
-
         console.log(`  → ${resultStr.slice(0, 200)}`);
-
-        steps.push({
-          type: 'tool_call',
-          toolName,
-          toolArgs: args,
-          toolResult: resultStr,
-        });
-
-        messages.push({
-          role: 'tool',
-          content: resultStr,
-          toolCallId: tc.toolCallId,
-        });
+        steps.push({ type: 'tool_call', toolName, toolArgs: args, toolResult: resultStr });
+        messages.push({ role: 'tool', content: resultStr, toolCallId: tc.toolCallId });
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        messages.push({
-          role: 'tool',
-          content: `Error: ${errMsg}`,
-          toolCallId: tc.toolCallId,
-        });
+        messages.push({ role: 'tool', content: `Error: ${errMsg}`, toolCallId: tc.toolCallId });
       }
     }
   }
 
-  // Max iterations reached
   return {
     output: '[Max iterations reached]',
     tokensIn: totalTokensIn,
