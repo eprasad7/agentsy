@@ -1097,6 +1097,60 @@ curl -X POST https://api.agentsy.com/v1/runs/run_hT2cF8nM6jLz/cancel \
   -H "Authorization: Bearer sk-agentsy-..."
 ```
 
+### 3.6 Approve Pending Tool Call
+
+Approves a tool call that is awaiting human-in-the-loop approval. Sends a Temporal signal to resume the workflow.
+
+```
+POST /v1/runs/:run_id/approve
+```
+
+**Request Body:**
+
+```typescript
+interface ApproveRequest {
+  step_id: string;             // The run_step awaiting approval
+}
+```
+
+**Response: `200 OK`**
+
+```typescript
+interface ApproveResponse {
+  id: string;                  // run_...
+  step_id: string;             // step_...
+  status: "approved";
+}
+```
+
+### 3.7 Deny Pending Tool Call
+
+Denies a tool call that is awaiting approval. The agent continues without executing the tool.
+
+```
+POST /v1/runs/:run_id/deny
+```
+
+**Request Body:**
+
+```typescript
+interface DenyRequest {
+  step_id: string;             // The run_step awaiting approval
+  reason?: string;             // Optional reason for denial
+}
+```
+
+**Response: `200 OK`**
+
+```typescript
+interface DenyResponse {
+  id: string;                  // run_...
+  step_id: string;             // step_...
+  status: "denied";
+  reason?: string;
+}
+```
+
 ---
 
 ## 4. Sessions
