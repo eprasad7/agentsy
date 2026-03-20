@@ -1,1 +1,2 @@
-export * from './schema/index.js';
+export * from './schema/index';
+export { createClient, createPgClient, createSqliteClient } from './client';
