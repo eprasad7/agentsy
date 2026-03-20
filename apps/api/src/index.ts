@@ -19,6 +19,7 @@ import { agentRoutes, agentVersionRoutes } from './routes/agents.js';
 import { runRoutes } from './routes/runs.js';
 import { secretRoutes } from './routes/secrets.js';
 import { sessionRoutes } from './routes/sessions.js';
+import { openaiCompatRoutes } from './routes/openai-compat.js';
 import { initTemporalClient } from './lib/temporal.js';
 
 const app = Fastify({
@@ -84,6 +85,7 @@ async function start() {
     agentVersionRoutes(app, db);
     runRoutes(app, db);
     sessionRoutes(app, db);
+    openaiCompatRoutes(app, db);
 
     // Concurrent run limiter — only for run creation
     app.addHook('preHandler', async (request) => {
