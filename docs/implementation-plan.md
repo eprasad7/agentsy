@@ -3,7 +3,7 @@
 **Author**: Planning Agent
 **Date**: March 2026
 **Status**: Draft
-**References**: PRD v1, Architecture v1, Technology Decisions, Data Model Spec, API Spec, SDK Spec, Deployment Runbook, User Journeys
+**References**: PRD v1, Architecture v1, Technology Decisions, Data Model Spec, API Spec, SDK Spec, Deployment Runbook, User Journeys, Agent Evolution Spec
 
 ---
 
@@ -11,7 +11,7 @@
 
 ### Total Phases
 
-12 phases (Phase 0-10 + Phase 6b), mapping to PRD Milestones 1-4 (weeks 1-16). Each phase builds on the previous. A developer should complete phases sequentially; some sub-tasks within a phase can be parallelized.
+14 phases (Phase 0-12 + Phase 6b), mapping to PRD Milestones 1-4 (weeks 1-16) plus post-beta milestones. Each phase builds on the previous. A developer should complete phases sequentially; some sub-tasks within a phase can be parallelized.
 
 ### Phase-to-Milestone Mapping
 
@@ -29,6 +29,8 @@
 | 8 | Dashboard & Observability | Milestone 2-4 | 5-7 days |
 | 9 | CLI Polish & DX | Milestone 1-4 | 3-4 days |
 | 10 | Webhooks & Integration | Milestone 4 | 2-3 days |
+| 11 | Agent Git Repos & CI/CD | Post-beta | 5-7 days |
+| 12 | Auto-Evolution Engine | Post-beta | 7-10 days |
 
 ### Phase-to-Journey Mapping
 
@@ -51,6 +53,8 @@
 | J14 | Fallback Model Configuration | Phase 2 | - |
 | J15 | CI/CD Integration | Phase 4 | Phase 9 |
 | J16 | Alerting & Notifications | Phase 8 | Phase 10 |
+| J18 | Agent Git Repo & CI/CD | Phase 11 | Phase 7, 9 |
+| J19 | Agent Auto-Evolution | Phase 12 | Phase 4, 11 |
 
 ### Prerequisites (Accounts & Credentials)
 
@@ -1695,6 +1699,270 @@ Files to create:
 
 ---
 
+## Phase 11: Agent Git Repos & CI/CD (Journeys 18)
+
+### Prerequisites
+- Phase 2 complete (agent versioning)
+- Phase 4 complete (eval engine)
+- Phase 7 complete (deployment & environments)
+
+### Steps
+
+#### 11.1 Implement agent repository initialization
+
+**What**: When an agent is created, initialize a bare Git repository on the platform. Store repo metadata in the `agent_repos` table.
+**Spec reference**: spec-agent-evolution.md section 2 (Agent Git Repositories).
+**Journey**: J18 step 1 (agent has a Git repo).
+**Acceptance criteria**: `POST /v1/agents` also creates a bare Git repo at `/repos/{org_id}/{agent_slug}.git`. `agent_repos` row is created with `storage_path`, `default_branch`, and `head_sha`. `GET /v1/agents/{agentId}/repo` returns repo metadata.
+
+Files to create:
+- `apps/api/src/routes/agent-repos.ts` -- Repo metadata endpoints (GET, commits, diff)
+- `apps/api/src/services/git-repo.ts` -- Git repo initialization and management (bare repo creation, server-side hooks)
+- `packages/db/src/schema/agent-repos.ts` -- `agent_repos` table definition
+
+#### 11.2 Implement Git transport layer
+
+**What**: Expose Git-compatible transport (HTTPS) so `git clone`, `git push`, `git pull` work against agent repos.
+**Spec reference**: spec-agent-evolution.md section 2.2 (Repository Lifecycle), 2.3 (Remote Storage).
+**Journey**: J18 step 2 (clone and push agent repos).
+**Acceptance criteria**: `git clone https://git.agentsy.com/org_xxx/support-agent.git` works with API key auth. `git push origin main` triggers server-side hooks. Standard Git operations (branch, log, diff) work.
+
+Files to create:
+- `apps/api/src/routes/git-transport.ts` -- Git smart HTTP transport (git-upload-pack, git-receive-pack)
+- `apps/api/src/middleware/git-auth.ts` -- API key authentication for Git transport
+
+#### 11.3 Implement server-side push hooks
+
+**What**: On `git push` to main, validate `agentsy.config.ts`, create an `agent_version`, and trigger CI pipeline.
+**Spec reference**: spec-agent-evolution.md section 2.3 (server-side hooks), section 3.1 (Pipeline Triggers).
+**Journey**: J18 step 3 (push triggers version creation and CI).
+**Acceptance criteria**: Push to main validates config schema. Invalid config rejects the push with error message. Valid push creates a new `agent_version` row from the committed config. CI pipeline is triggered.
+
+Files to create:
+- `apps/api/src/services/push-hook.ts` -- Server-side post-receive hook logic (validate, create version, trigger CI)
+- `apps/api/src/services/config-parser.ts` -- Parse and validate agentsy.config.ts from repo contents
+
+#### 11.4 Implement CI pipeline Temporal workflow
+
+**What**: A Temporal workflow that runs the CI pipeline: validate → eval → compare baseline → gate → deploy → notify.
+**Spec reference**: spec-agent-evolution.md section 3.2-3.3 (Pipeline Definition and Execution).
+**Journey**: J18 step 4 (CI pipeline runs evals on push).
+**Acceptance criteria**: Push to main triggers `CIPipelineWorkflow`. Workflow runs eval experiments against configured datasets. Compares results against active baseline. Passes/fails based on regression gate + minimum score. Auto-deploys to staging if configured. Sends notifications on failure/deploy.
+
+Files to create:
+- `apps/worker/src/workflows/ci-pipeline.ts` -- CIPipelineWorkflow (validate → eval → compare → gate → deploy → notify)
+- `apps/worker/src/activities/ci-activities.ts` -- Pipeline activities (ValidateConfig, CreateVersion, RunEvals, CompareBaseline, GateDecision, Deploy, Notify)
+
+#### 11.5 Implement pipeline API and dashboard
+
+**What**: API endpoints for listing pipeline runs and a dashboard tab showing pipeline history.
+**Spec reference**: spec-agent-evolution.md section 10.4 (CI Pipeline API), section 11.2 (CI/CD Tab).
+**Journey**: J18 step 5 (view pipeline results).
+**Acceptance criteria**: `GET /v1/agents/{agentId}/pipelines` lists pipeline runs with status. `GET /v1/agents/{agentId}/pipelines/{runId}` shows run details including eval results and gate decisions. Dashboard CI/CD tab shows pipeline history with trigger, commit, eval status, and deploy status.
+
+Files to create:
+- `apps/api/src/routes/pipelines.ts` -- Pipeline run list/detail endpoints
+- `apps/web/src/app/agents/[id]/ci-cd/page.tsx` -- CI/CD dashboard tab
+- `apps/web/src/app/agents/[id]/repo/page.tsx` -- Repository dashboard tab (commits, files)
+
+#### 11.6 Implement PR eval integration
+
+**What**: When a PR is opened against main, run evals and post a comparison comment.
+**Spec reference**: spec-agent-evolution.md section 3.4 (PR Integration).
+**Journey**: J18 step 6 (PR gets eval comparison).
+**Acceptance criteria**: PR to main triggers eval pipeline. Results are compared against active baseline. A markdown comparison table is posted as a PR comment showing per-grader deltas. Status is PASS/FAIL.
+
+Files to modify:
+- `apps/worker/src/workflows/ci-pipeline.ts` -- Add PR comparison branch
+- `apps/worker/src/activities/ci-activities.ts` -- Add PostPRComment activity
+
+#### 11.7 Implement `agentsy push` and `agentsy pull` CLI commands
+
+**What**: CLI commands that wrap `git push`/`git pull` with Agentsy remote configuration.
+**Spec reference**: spec-agent-evolution.md section 2.2 (Repository Lifecycle).
+**Journey**: J18 step 7 (push/pull agent code).
+**Acceptance criteria**: `agentsy push` validates config locally, then pushes to Agentsy remote. `agentsy pull` pulls latest from Agentsy remote. Both commands handle authentication via stored API key.
+
+Files to create:
+- `packages/cli/src/commands/push.ts` -- `agentsy push` command
+- `packages/cli/src/commands/pull.ts` -- `agentsy pull` command
+
+### Tests (Phase 11)
+
+- **Unit**: `apps/api/src/__tests__/git-repo.test.ts` -- Repo creation, config parsing
+- **Unit**: `apps/api/src/__tests__/push-hook.test.ts` -- Push validation, version creation
+- **Integration**: `apps/api/src/__tests__/agent-repos.test.ts` -- Repo CRUD, Git transport
+- **Integration**: `apps/worker/src/__tests__/ci-pipeline.test.ts` -- Full pipeline: push → eval → gate → deploy
+- **E2E**: Push to agent repo → CI runs evals → auto-deploys to staging
+
+### User Journey Verification
+
+- **J18**: Create agent → clone repo → edit config → push → CI runs → evals pass → deployed to staging → open PR → eval comparison posted
+
+### Definition of Done
+
+- Demo: `agentsy init "support-agent"` creates local project with Git repo. `agentsy push` sends to platform. CI pipeline runs evals against golden dataset. Pipeline passes. Agent auto-deploys to staging. Open PR with config change. Eval comparison comment appears on PR. Merge PR. Production deploy happens manually via `agentsy deploy --env production`.
+
+---
+
+## Phase 12: Auto-Evolution Engine (Journey 19)
+
+### Prerequisites
+- Phase 4 complete (eval engine — graders, datasets, experiments, baselines)
+- Phase 11 complete (agent Git repos, CI/CD pipelines)
+
+### Steps
+
+#### 12.1 Implement evolution data model
+
+**What**: Create the `evolution_sessions` and `evolution_mutations` tables, enums, and migration.
+**Spec reference**: spec-agent-evolution.md section 9 (Data Model Additions).
+**Journey**: J19 foundation.
+**Acceptance criteria**: `evolution_sessions` table stores session metadata (status, scores, budget, git context). `evolution_mutations` table stores per-mutation attempts (type, hypothesis, config diff, scores, decision). All four new enums created. RLS policies applied. Migration runs cleanly.
+
+Files to create:
+- `packages/db/src/schema/evolution-sessions.ts` -- `evolution_sessions` table
+- `packages/db/src/schema/evolution-mutations.ts` -- `evolution_mutations` table
+- `packages/db/src/schema/enums-evolution.ts` -- `evolution_session_status`, `mutation_status`, `mutation_type`, `auto_promote_level` enums
+
+#### 12.2 Implement evolution configuration SDK
+
+**What**: Add `agentsy.defineEvolution()` to the SDK for declaring evolution config in `evolve.config.ts`.
+**Spec reference**: spec-agent-evolution.md section 8.1 (Evolution Configuration).
+**Journey**: J19 step 1 (configure evolution).
+**Acceptance criteria**: `agentsy.defineEvolution({ metric, mutable, frozen, directives, budget, schedule, safety, autoPromote })` validates and returns a typed config object. Config is parsed from `evolve.config.ts` in the agent repo. Invalid configs throw descriptive errors.
+
+Files to create:
+- `packages/sdk/src/evolution.ts` -- `defineEvolution()` function and types (`EvolutionConfig`, `EvolutionMetric`, `EvolutionBudget`, `EvolutionSafety`)
+
+#### 12.3 Implement meta-agent
+
+**What**: The Claude-powered meta-agent that reads current agent config, evolution directives, and mutation history, then proposes atomic mutations.
+**Spec reference**: spec-agent-evolution.md section 4.2 (Meta-Agent), section 5 (Mutation Strategies).
+**Journey**: J19 step 2 (meta-agent proposes mutations).
+**Acceptance criteria**: Meta-agent receives current config, directives, ledger history, and eval results. Returns a structured mutation proposal (type, description, hypothesis, config diff). Respects mutable/frozen field constraints. Avoids repeating previously discarded mutations. Supports all 8 mutation types: instruction_rewrite, tool_add, tool_remove, tool_reorder, guardrail_tune, model_swap, parameter_sweep, few_shot_add/remove, memory_config, composite.
+
+Files to create:
+- `apps/worker/src/evolution/meta-agent.ts` -- Meta-agent implementation (system prompt, structured output, mutation proposal)
+- `apps/worker/src/evolution/mutation-types.ts` -- Mutation type definitions and config diff format
+- `apps/worker/src/evolution/mutation-applier.ts` -- Apply a mutation diff to an agent config
+
+#### 12.4 Implement evolution loop Temporal workflow
+
+**What**: The core evolution loop as a Temporal workflow: load config → mutation loop (propose → apply → eval → keep/discard) → commit results.
+**Spec reference**: spec-agent-evolution.md section 4.1 (Evolution Loop), section 4.3 (Scoring & Comparison).
+**Journey**: J19 step 3 (evolution runs autonomously).
+**Acceptance criteria**: `EvolutionSessionWorkflow` creates an `evolve/*` branch from main. Loops: meta-agent proposes mutation → applies to config → commits on branch → runs eval suite → compares against current best → keeps (advance) or discards (reset). Respects budget caps (max mutations, max cost, max duration, per-mutation cost). Session stops gracefully when budget exhausted. Kept mutations are squash-merged into main. New `agent_version` created. Evolution ledger TSV written to repo.
+
+Files to create:
+- `apps/worker/src/workflows/evolution-session.ts` -- EvolutionSessionWorkflow
+- `apps/worker/src/activities/evolution-activities.ts` -- Activities: ProposeMutation, ApplyMutation, CommitMutation, RunEval, CompareMutation, KeepMutation, DiscardMutation, FinalizeSession
+
+#### 12.5 Implement scoring and comparison logic
+
+**What**: Composite score calculation, regression detection, simplicity pressure, and keep/discard decision logic.
+**Spec reference**: spec-agent-evolution.md section 4.3 (Scoring & Comparison).
+**Journey**: J19 step 4 (mutations are scored and compared).
+**Acceptance criteria**: Composite score computed from weighted grader scores. Mutation rejected if any individual grader regresses beyond `maxRegressionPerGrader`. Zero-tolerance graders (safety) never allowed to regress. Simplicity pressure: when scores are equal, prefer config with fewer tools, shorter instructions, cheaper model. Decision reason logged for every mutation.
+
+Files to create:
+- `apps/worker/src/evolution/scoring.ts` -- Composite score calculation, regression detection, simplicity scoring, keep/discard decision
+
+#### 12.6 Implement evolution ledger
+
+**What**: Write every mutation attempt to both the platform DB and a local TSV file in the agent repo.
+**Spec reference**: spec-agent-evolution.md section 6 (Evolution Ledger).
+**Journey**: J19 step 5 (evolution history is tracked).
+**Acceptance criteria**: Every mutation (kept or discarded) is written to `evolution_mutations` table with full context. Session summary is written to `evolution_sessions` table. Local TSV file (`.agentsy/evolution-ledger.tsv`) is appended and committed to repo. TSV contains: session_id, mutation_id, timestamp, type, description, hypothesis, composite_score, status, commit_sha, cost_usd, duration_ms.
+
+Files to create:
+- `apps/worker/src/evolution/ledger.ts` -- Ledger write logic (DB + TSV)
+
+#### 12.7 Implement evolution API endpoints
+
+**What**: REST API for starting, listing, cancelling, and streaming evolution sessions.
+**Spec reference**: spec-agent-evolution.md section 10.2-10.3 (Evolution API).
+**Journey**: J19 step 6 (manage evolution via API).
+**Acceptance criteria**: `POST /v1/agents/{agentId}/evolve` starts a session (returns session ID). `GET /v1/agents/{agentId}/evolve` lists sessions. `GET /v1/agents/{agentId}/evolve/{sessionId}` returns session details with mutation list. `POST .../cancel` cancels a running session. `GET .../stream` returns SSE stream of mutation events. `POST .../promote` promotes evolved version to an environment.
+
+Files to create:
+- `apps/api/src/routes/evolution.ts` -- Evolution session CRUD, stream, promote endpoints
+
+#### 12.8 Implement scheduled evolution
+
+**What**: Cron-based evolution sessions triggered by the schedule in `evolve.config.ts`.
+**Spec reference**: spec-agent-evolution.md section 8.1 (`schedule` field).
+**Journey**: J19 step 7 (nightly evolution runs).
+**Acceptance criteria**: When `evolve.config.ts` specifies a `schedule` (cron expression), the platform registers a Temporal cron schedule. At the configured time, the evolution workflow is triggered automatically. Schedule is updated when `evolve.config.ts` changes. Schedule can be paused/resumed via API.
+
+Files to create:
+- `apps/worker/src/evolution/scheduler.ts` -- Cron schedule registration and management
+
+#### 12.9 Implement evolution safety gates
+
+**What**: Approval gates, regression protection, budget enforcement, and rollback.
+**Spec reference**: spec-agent-evolution.md section 7 (Safety & Governance).
+**Journey**: J19 step 8 (evolution is safe).
+**Acceptance criteria**: `autoPromote: "none"` — evolved version stays on branch, requires human merge. `autoPromote: "staging"` — auto-deploys to staging after session. `autoPromote: "production"` — requires org admin to enable. Diff review shows exactly what changed. `agentsy rollback` reverts to any previous version (creates new version with old config). Full audit log of all evolution actions.
+
+Files to modify:
+- `apps/worker/src/workflows/evolution-session.ts` -- Add promotion logic based on autoPromote level
+- `apps/api/src/routes/evolution.ts` -- Add promote endpoint with permission check
+
+#### 12.10 Implement evolution dashboard
+
+**What**: Dashboard tabs for evolution history, mutation details, and score trends.
+**Spec reference**: spec-agent-evolution.md section 11 (Dashboard UX).
+**Journey**: J19 step 9 (view evolution results in dashboard).
+**Acceptance criteria**: Evolution tab shows score trend chart, last session summary, mutation history table (type, description, score, status). Click mutation to see config diff and eval results. "Run Evolution Now" button triggers manual session. "Promote to Staging/Production" button available. "Edit Directives" opens evolution config editor.
+
+Files to create:
+- `apps/web/src/app/agents/[id]/evolution/page.tsx` -- Evolution dashboard tab
+- `apps/web/src/components/evolution-history.tsx` -- Mutation history table component
+- `apps/web/src/components/score-trend-chart.tsx` -- Score trend visualization
+- `apps/web/src/components/evolution-diff-viewer.tsx` -- Config diff viewer for mutations
+
+#### 12.11 Implement evolution CLI commands
+
+**What**: CLI commands for manual evolution, history, comparison, and promotion.
+**Spec reference**: spec-agent-evolution.md section 8.2 (CLI Commands).
+**Journey**: J19 step 10 (manage evolution via CLI).
+**Acceptance criteria**: `agentsy evolve` starts a manual evolution session (streams progress). `agentsy evolve --budget-usd 5.00 --max-mutations 20` overrides budget. `agentsy evolve history` shows past sessions. `agentsy evolve compare ver_041 ver_042` shows score diff. `agentsy evolve promote ver_042 --env staging` promotes evolved version.
+
+Files to create:
+- `packages/cli/src/commands/evolve.ts` -- `agentsy evolve`, `agentsy evolve history`, `agentsy evolve compare`, `agentsy evolve promote` commands
+
+#### 12.12 Implement evolution webhook events
+
+**What**: New webhook event types for evolution session lifecycle.
+**Spec reference**: spec-agent-evolution.md section 10.5 (Webhook Events).
+**Journey**: J19 (evolution notifications).
+**Acceptance criteria**: `evolution.started`, `evolution.mutation_complete`, `evolution.completed` webhook events are delivered to subscribed endpoints. Events include session ID, mutation details, scores, and status.
+
+Files to modify:
+- `apps/worker/src/jobs/webhook-delivery.ts` -- Add evolution event types
+- `apps/api/src/routes/webhooks.ts` -- Add evolution events to subscription options
+
+### Tests (Phase 12)
+
+- **Unit**: `apps/worker/src/__tests__/meta-agent.test.ts` -- Meta-agent proposes valid mutations, respects mutable/frozen, avoids repeats
+- **Unit**: `apps/worker/src/__tests__/scoring.test.ts` -- Composite score, regression detection, simplicity pressure, keep/discard logic
+- **Unit**: `apps/worker/src/__tests__/mutation-applier.test.ts` -- Config diff application for all mutation types
+- **Unit**: `apps/worker/src/__tests__/ledger.test.ts` -- TSV write, DB write, ledger read
+- **Integration**: `apps/worker/src/__tests__/evolution-session.test.ts` -- Full loop: propose → apply → eval → keep/discard → finalize
+- **Integration**: `apps/api/src/__tests__/evolution.test.ts` -- Evolution API CRUD, stream, promote
+- **E2E**: Start evolution session → meta-agent proposes 3 mutations → 1 kept, 2 discarded → merged to main → new version created → score improved
+
+### User Journey Verification
+
+- **J19**: Configure evolution → run manually → see 5 mutations (2 kept, 3 discarded) → composite score improves → promote to staging → verify evolved config is deployed → schedule nightly evolution → verify next run triggers at configured time
+
+### Definition of Done
+
+- Demo: Create agent with eval dataset (10 golden cases). Configure `evolve.config.ts` with directives ("reduce hallucination, prefer cheaper model"). Run `agentsy evolve`. Meta-agent proposes 5 mutations. 2 are kept (instruction rewrite, temperature reduction). Score improves from 0.85 to 0.89. Evolution ledger shows full history. Dashboard evolution tab shows score trend. Promote evolved version to staging. Schedule nightly evolution. Verify next session triggers at 2am.
+
+---
+
 ## Cross-Phase Concerns
 
 ### OTel Instrumentation (Spans across Phases 2-8)
@@ -2067,6 +2335,10 @@ The following amendments address gaps identified during a comprehensive review o
 
 ### `packages/db/`
 - `src/schema/*.ts` -- All 25 table definitions (Phase 0)
+- `src/schema/agent-repos.ts` -- `agent_repos` table (Phase 11)
+- `src/schema/evolution-sessions.ts` -- `evolution_sessions` table (Phase 12)
+- `src/schema/evolution-mutations.ts` -- `evolution_mutations` table (Phase 12)
+- `src/schema/enums-evolution.ts` -- Evolution enums (Phase 12)
 - `src/seeds/connector-catalog.ts` -- Seed 15 starter connectors (Phase 6b)
 - `src/client.ts` -- DB client factory (Phase 0)
 - `src/seed.ts` -- Development seed script (Phase 0+)
@@ -2079,6 +2351,7 @@ The following amendments address gaps identified during a comprehensive review o
 - `src/types.ts` -- AgentConfig, ToolDefinition, etc. (Phase 2)
 - `src/validation.ts` -- Zod schemas (Phase 2)
 - `src/serialization.ts` -- Config to API JSON (Phase 2)
+- `src/evolution.ts` -- `defineEvolution()` function and types (Phase 12)
 
 ### `packages/client/`
 - `src/client.ts` -- `AgentsyClient` class (Phase 3)
@@ -2128,6 +2401,9 @@ The following amendments address gaps identified during a comprehensive review o
 - `src/commands/kb-create.ts` -- `agentsy kb create` (Phase 5)
 - `src/commands/kb-upload.ts` -- `agentsy kb upload` (Phase 5)
 - `src/commands/connectors.ts` -- `agentsy connectors list|connect|disconnect|status` (Phase 6b)
+- `src/commands/push.ts` -- `agentsy push` (Phase 11)
+- `src/commands/pull.ts` -- `agentsy pull` (Phase 11)
+- `src/commands/evolve.ts` -- `agentsy evolve`, history, compare, promote (Phase 12)
 - `src/dev/local-runner.ts` -- In-process agentic loop (Phase 2)
 - `src/dev/local-server.ts` -- Local Fastify server (Phase 2)
 - `src/dev/playground.ts` -- Local playground UI (Phase 2)
@@ -2177,6 +2453,14 @@ The following amendments address gaps identified during a comprehensive review o
 - `src/routes/notifications.ts` -- Notifications (Phase 8)
 - `src/routes/webhooks.ts` -- Webhook CRUD (Phase 10)
 - `src/routes/connectors.ts` -- Connector catalog and connection management (Phase 6b)
+- `src/routes/agent-repos.ts` -- Agent repo metadata, commits, diff (Phase 11)
+- `src/routes/git-transport.ts` -- Git smart HTTP transport (Phase 11)
+- `src/routes/pipelines.ts` -- CI pipeline run list/detail (Phase 11)
+- `src/routes/evolution.ts` -- Evolution session CRUD, stream, promote (Phase 12)
+- `src/services/git-repo.ts` -- Git repo initialization and management (Phase 11)
+- `src/services/push-hook.ts` -- Server-side post-receive hook logic (Phase 11)
+- `src/services/config-parser.ts` -- Parse agentsy.config.ts from repo (Phase 11)
+- `src/middleware/git-auth.ts` -- API key auth for Git transport (Phase 11)
 - `src/lib/oauth-client.ts` -- OAuth 2.0 client (Phase 6b)
 - `src/streaming/sse-handler.ts` -- SSE handler (Phase 3)
 
@@ -2217,6 +2501,16 @@ The following amendments address gaps identified during a comprehensive review o
 - `src/jobs/webhook-delivery.ts` -- Webhook event delivery (Phase 10)
 - `src/jobs/token-refresh.ts` -- OAuth token auto-refresh (Phase 6b)
 - `src/tools/connector-executor.ts` -- Connector tool execution proxy (Phase 6b)
+- `src/workflows/ci-pipeline.ts` -- CI pipeline workflow (Phase 11)
+- `src/activities/ci-activities.ts` -- CI pipeline activities (Phase 11)
+- `src/workflows/evolution-session.ts` -- Evolution session workflow (Phase 12)
+- `src/activities/evolution-activities.ts` -- Evolution activities (Phase 12)
+- `src/evolution/meta-agent.ts` -- Meta-agent for mutation proposals (Phase 12)
+- `src/evolution/mutation-types.ts` -- Mutation type definitions (Phase 12)
+- `src/evolution/mutation-applier.ts` -- Apply mutation diffs to agent config (Phase 12)
+- `src/evolution/scoring.ts` -- Composite scoring, regression detection (Phase 12)
+- `src/evolution/ledger.ts` -- Evolution ledger writer (Phase 12)
+- `src/evolution/scheduler.ts` -- Cron schedule for evolution sessions (Phase 12)
 
 ### `apps/web/`
 - `src/app/layout.tsx` -- Root layout with sidebar (Phase 1)
@@ -2252,6 +2546,9 @@ The following amendments address gaps identified during a comprehensive review o
 - `src/app/settings/billing/page.tsx` -- Billing/plan page (Phase 8)
 - `src/app/settings/alerts/page.tsx` -- Alert configuration (Phase 8)
 - `src/app/settings/webhooks/page.tsx` -- Webhook management (Phase 10)
+- `src/app/agents/[id]/ci-cd/page.tsx` -- CI/CD pipeline history (Phase 11)
+- `src/app/agents/[id]/repo/page.tsx` -- Repository browser (Phase 11)
+- `src/app/agents/[id]/evolution/page.tsx` -- Evolution dashboard tab (Phase 12)
 - `src/app/connectors/page.tsx` -- Connector catalog browser (Phase 6b)
 - `src/app/connectors/callback/page.tsx` -- OAuth callback page (Phase 6b)
 - `src/components/*.tsx` -- Shared UI components (Phases 1-10)
@@ -2276,7 +2573,9 @@ Before declaring the platform ready for private beta (end of Milestone 4, week 1
 - [ ] Phase 8: Dashboard home (populated), agent list, trace viewer, usage charts, sparklines, alerts (with data model), prompt diff viewer
 - [ ] Phase 9: CLI polished, hot reload, logs tail (with backend SSE endpoint), CI/CD docs
 - [ ] Phase 10: Webhooks with signature verification and retry
-- [ ] All 16 user journeys verified end-to-end
+- [ ] Phase 11: Agent Git repos, Git transport, push hooks, CI pipeline workflow, PR eval comparison, pipeline dashboard
+- [ ] Phase 12: Evolution data model, meta-agent, evolution loop workflow, scoring/regression, ledger, scheduled evolution, safety gates, evolution dashboard, CLI commands
+- [ ] All 19 user journeys verified end-to-end
 - [ ] Load test: 10 concurrent agent runs per org sustains without degradation
 - [ ] Security: cross-tenant isolation verified, secrets never logged, API keys hashed
 - [ ] Documentation: API docs, SDK docs, getting started guide published
