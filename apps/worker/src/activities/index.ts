@@ -5,5 +5,6 @@ export { persistRunStep } from './persist-run-step.js';
 export { persistRun } from './persist-run.js';
 export { validateOutput } from './validate-output.js';
 export { emitRunEvent, cleanupRunEvents } from './publish-event.js';
+export { generateStepId } from './generate-id.js';
 export { loadSessionHistory } from './session-history.js';
 export { persistMessages } from './persist-messages.js';

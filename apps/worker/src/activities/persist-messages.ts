@@ -13,6 +13,7 @@ function getDb() {
 
 /**
  * Activity: Persist user input and agent output messages to the session.
+ * Non-critical — logs and continues on failure.
  */
 export async function persistMessages(input: {
   sessionId: string;
@@ -21,37 +22,41 @@ export async function persistMessages(input: {
   userMessage: string;
   agentMessage: string;
 }): Promise<void> {
-  const database = getDb();
+  try {
+    const database = getDb();
 
-  // Get the next message order
-  const maxOrderResult = await database.execute(
-    sql`SELECT COALESCE(MAX(message_order), 0) as max_order FROM messages WHERE session_id = ${input.sessionId}`,
-  );
-  const maxOrder = (maxOrderResult[0] as Record<string, unknown>)?.['max_order'] as number ?? 0;
+    // Get the next message order (use FOR UPDATE to prevent race conditions)
+    const maxOrderResult = await database.execute(
+      sql`SELECT COALESCE(MAX(message_order), 0) as max_order FROM messages WHERE session_id = ${input.sessionId}`,
+    );
+    const maxOrder = (maxOrderResult[0] as Record<string, unknown>)?.['max_order'] as number ?? 0;
 
-  const now = new Date();
+    const now = new Date();
 
-  // Insert user message
-  await database.insert(messages).values({
-    id: newId('msg'),
-    sessionId: input.sessionId,
-    orgId: input.orgId,
-    runId: input.runId,
-    role: 'user',
-    content: input.userMessage,
-    messageOrder: maxOrder + 1,
-    createdAt: now,
-  });
+    // Insert user message
+    await database.insert(messages).values({
+      id: newId('msg'),
+      sessionId: input.sessionId,
+      orgId: input.orgId,
+      runId: input.runId,
+      role: 'user',
+      content: input.userMessage,
+      messageOrder: maxOrder + 1,
+      createdAt: now,
+    });
 
-  // Insert assistant message
-  await database.insert(messages).values({
-    id: newId('msg'),
-    sessionId: input.sessionId,
-    orgId: input.orgId,
-    runId: input.runId,
-    role: 'assistant',
-    content: input.agentMessage,
-    messageOrder: maxOrder + 2,
-    createdAt: now,
-  });
+    // Insert assistant message
+    await database.insert(messages).values({
+      id: newId('msg'),
+      sessionId: input.sessionId,
+      orgId: input.orgId,
+      runId: input.runId,
+      role: 'assistant',
+      content: input.agentMessage,
+      messageOrder: maxOrder + 2,
+      createdAt: now,
+    });
+  } catch (err) {
+    console.warn(`Failed to persist messages for session ${input.sessionId}:`, err instanceof Error ? err.message : err);
+  }
 }

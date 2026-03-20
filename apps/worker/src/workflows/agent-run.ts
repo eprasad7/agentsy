@@ -138,14 +138,17 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
     }
 
     iteration++;
-    const stepId = `stp_${runId.slice(4)}_${stepOrder + 1}`;
+
+    // Generate step ID upfront so streaming events and persistence use the same ID
+    const llmStepId = await activities.generateStepId();
+    const nextStepOrder = ++stepOrder;
 
     // Emit step.thinking
     await activities.emitRunEvent(runId, {
-      type: 'step.thinking', step_id: stepId, step_order: stepOrder + 1, model: resolvedModel,
+      type: 'step.thinking', step_id: llmStepId, step_order: nextStepOrder, model: resolvedModel,
     });
 
-    // LLM call (streaming — emits step.text_delta events internally)
+    // LLM call (streaming — emits step.text_delta events internally using llmStepId)
     const llmStepStart = Date.now();
     const llmResult = await activities.llmCall({
       model: resolvedModel,
@@ -155,23 +158,24 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
       tools: Object.keys(aiTools).length > 0 ? aiTools as Record<string, never> : undefined,
       modelParams: config.modelParams as Record<string, unknown>,
       runId,
-      stepId,
+      stepId: llmStepId,
     });
 
     totalTokensIn += llmResult.tokensIn;
     totalTokensOut += llmResult.tokensOut;
     totalCost += llmResult.costUsd;
 
-    // Persist + emit step.completed for LLM call
-    const llmStepId = await activities.persistRunStep({
-      runId, orgId, stepOrder: ++stepOrder,
+    // Persist with the same step ID used for streaming
+    await activities.persistRunStep({
+      id: llmStepId,
+      runId, orgId, stepOrder: nextStepOrder,
       type: 'llm_call', model: llmResult.model,
       tokensIn: llmResult.tokensIn, tokensOut: llmResult.tokensOut, costUsd: llmResult.costUsd,
       output: llmResult.text || undefined, durationMs: Date.now() - llmStepStart,
     });
 
     await activities.emitRunEvent(runId, {
-      type: 'step.completed', step_id: llmStepId, step_order: stepOrder,
+      type: 'step.completed', step_id: llmStepId, step_order: nextStepOrder,
       step_type: 'llm_call', tokens_in: llmResult.tokensIn, tokens_out: llmResult.tokensOut,
       cost_usd: llmResult.costUsd, duration_ms: Date.now() - llmStepStart,
     });
@@ -224,15 +228,21 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
     for (const toolCall of llmResult.toolCalls) {
       const toolDef = toolsConfig.find((t) => t.name === toolCall.toolName);
 
-      // Emit step.tool_call
+      // Generate tool step ID upfront
+      const toolStepId = await activities.generateStepId();
+      const toolStepOrder = ++stepOrder;
+
+      // Emit step.tool_call with the real step ID
       await activities.emitRunEvent(runId, {
-        type: 'step.tool_call', step_id: `stp_tc_${stepOrder}`, step_order: stepOrder + 1,
+        type: 'step.tool_call', step_id: toolStepId, step_order: toolStepOrder,
         tool_name: toolCall.toolName, tool_call_id: toolCall.toolCallId, arguments: toolCall.args,
       });
 
       // Approval gate
       if (toolDef && checkApproval(toolDef, environment)) {
-        const approvalStepId = await activities.persistRunStep({
+        const approvalStepId = await activities.generateStepId();
+        await activities.persistRunStep({
+          id: approvalStepId,
           runId, orgId, stepOrder: ++stepOrder, type: 'approval_request',
           toolName: toolCall.toolName, input: JSON.stringify(toolCall.args), approvalStatus: 'pending',
         });
@@ -270,22 +280,23 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
         toolName: toolCall.toolName, args: toolCall.args, timeout: toolDef?.timeout,
       });
 
-      // Emit step.tool_result
+      // Emit step.tool_result with the same step ID
       await activities.emitRunEvent(runId, {
-        type: 'step.tool_result', step_id: `stp_tr_${stepOrder}`,
+        type: 'step.tool_result', step_id: toolStepId,
         tool_name: toolCall.toolName, tool_call_id: toolCall.toolCallId,
         result: toolResult.output, duration_ms: toolResult.durationMs, error: toolResult.error ?? null,
       });
 
-      // Persist tool step
-      const toolStepId = await activities.persistRunStep({
-        runId, orgId, stepOrder: ++stepOrder, type: 'tool_call', toolName: toolCall.toolName,
+      // Persist tool step with the pre-generated ID
+      await activities.persistRunStep({
+        id: toolStepId,
+        runId, orgId, stepOrder: toolStepOrder, type: 'tool_call', toolName: toolCall.toolName,
         input: JSON.stringify(toolCall.args), output: toolResult.output,
         durationMs: toolResult.durationMs, error: toolResult.error, outputTruncated: toolResult.truncated,
       });
 
       await activities.emitRunEvent(runId, {
-        type: 'step.completed', step_id: toolStepId, step_order: stepOrder,
+        type: 'step.completed', step_id: toolStepId, step_order: toolStepOrder,
         step_type: 'tool_call', tokens_in: 0, tokens_out: 0, cost_usd: 0, duration_ms: Date.now() - toolStart,
       });
 

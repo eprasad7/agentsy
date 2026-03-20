@@ -2,6 +2,7 @@ import { runSteps, createPgClient } from '@agentsy/db';
 import { newId } from '@agentsy/shared';
 
 export interface PersistRunStepInput {
+  id?: string;  // Pre-generated step ID (if not provided, one is generated)
   runId: string;
   orgId: string;
   stepOrder: number;
@@ -35,7 +36,7 @@ function getDb() {
  */
 export async function persistRunStep(input: PersistRunStepInput): Promise<string> {
   const database = getDb();
-  const id = newId('stp');
+  const id = input.id ?? newId('stp');
   const now = new Date();
 
   await database.insert(runSteps).values({
