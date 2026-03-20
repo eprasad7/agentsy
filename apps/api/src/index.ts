@@ -13,6 +13,8 @@ import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerRequestLogger } from './plugins/request-logger.js';
 import { agentRoutes, agentVersionRoutes } from './routes/agents.js';
 import { apiKeyRoutes } from './routes/api-keys.js';
+import { evalDatasetRoutes, evalCaseRoutes } from './routes/eval-datasets.js';
+import { evalExperimentRoutes, evalBaselineRoutes } from './routes/eval-experiments.js';
 import { environmentRoutes } from './routes/environments.js';
 import { healthRoutes } from './routes/health.js';
 import { onboardingRoutes } from './routes/onboarding.js';
@@ -86,6 +88,10 @@ async function start() {
     runRoutes(app, db);
     sessionRoutes(app, db);
     openaiCompatRoutes(app, db);
+    evalDatasetRoutes(app, db);
+    evalCaseRoutes(app, db);
+    evalExperimentRoutes(app, db);
+    evalBaselineRoutes(app, db);
 
     // Concurrent run limiter — only for run creation
     app.addHook('preHandler', async (request) => {
