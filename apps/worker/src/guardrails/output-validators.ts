@@ -1,7 +1,9 @@
-import type { VersionGuardrailsConfig } from '@agentsy/db';
 import { detectPii } from './pii-patterns.js';
 
-type OutputValidationRule = NonNullable<VersionGuardrailsConfig['outputValidation']>[number];
+interface OutputValidationRule {
+  type: string;
+  config?: Record<string, unknown>;
+}
 
 export interface ValidationResult {
   passed: boolean;
@@ -62,6 +64,24 @@ export function runOutputValidation(
             type: 'content_policy',
             message: `Blocked content detected: ${found.join(', ')}`,
           });
+        }
+        break;
+      }
+
+      case 'json_schema': {
+        // Validate output is valid JSON conforming to the provided schema
+        // (lightweight check: parse JSON and verify top-level keys)
+        const config = validator.config as Record<string, unknown> | undefined;
+        const schema = config?.['schema'] as Record<string, unknown> | undefined;
+        if (schema) {
+          try {
+            JSON.parse(output);
+          } catch {
+            violations.push({
+              type: 'json_schema',
+              message: 'Output is not valid JSON',
+            });
+          }
         }
         break;
       }

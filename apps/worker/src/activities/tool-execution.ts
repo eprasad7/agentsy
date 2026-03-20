@@ -33,11 +33,14 @@ export async function executeNativeTool(input: ToolExecInput): Promise<ToolExecR
     });
 
     const maxSize = GUARDRAIL_DEFAULTS.maxToolResultSize;
+    const truncationWarning = '\n[truncated — result exceeded 10KB limit]';
     let truncated = false;
     let output = result;
 
     if (Buffer.byteLength(output, 'utf-8') > maxSize) {
-      output = output.slice(0, maxSize) + '\n[truncated — result exceeded 10KB limit]';
+      // Slice to fit within maxSize INCLUDING the warning message
+      const warningBytes = Buffer.byteLength(truncationWarning, 'utf-8');
+      output = output.slice(0, maxSize - warningBytes) + truncationWarning;
       truncated = true;
     }
 

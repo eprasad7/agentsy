@@ -16,6 +16,10 @@ describe('evaluateApprovalPolicy', () => {
     expect(evaluateApprovalPolicy({ name: 't', type: 'native', riskLevel: 'write' }, 'development')).toEqual({ requiresApproval: false });
   });
 
+  it('write tool auto-approves in staging', () => {
+    expect(evaluateApprovalPolicy({ name: 't', type: 'native', riskLevel: 'write' }, 'staging')).toEqual({ requiresApproval: false });
+  });
+
   it('write tool requires approval in production', () => {
     expect(evaluateApprovalPolicy({ name: 't', type: 'native', riskLevel: 'write' }, 'production')).toEqual({ requiresApproval: true });
   });

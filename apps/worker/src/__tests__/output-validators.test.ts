@@ -85,4 +85,40 @@ describe('runOutputValidation', () => {
     expect(result.passed).toBe(false);
     expect(result.violations[0]?.type).toBe('content_policy');
   });
+
+  it('detects multiple PII types in one output', () => {
+    const result = runOutputValidation(
+      'Contact: user@example.com, SSN: 123-45-6789',
+      [{ type: 'no_pii' }],
+    );
+    expect(result.passed).toBe(false);
+    expect(result.violations[0]?.message).toContain('email');
+    expect(result.violations[0]?.message).toContain('ssn');
+  });
+
+  it('json_schema: rejects non-JSON output', () => {
+    const result = runOutputValidation('This is plain text, not JSON', [
+      { type: 'json_schema' as never, config: { schema: { type: 'object' } } },
+    ]);
+    expect(result.passed).toBe(false);
+    expect(result.violations[0]?.type).toBe('json_schema');
+  });
+
+  it('json_schema: passes valid JSON output', () => {
+    const result = runOutputValidation('{"name": "test", "value": 42}', [
+      { type: 'json_schema' as never, config: { schema: { type: 'object' } } },
+    ]);
+    expect(result.passed).toBe(true);
+  });
+
+  it('runs multiple validators and reports all violations', () => {
+    const result = runOutputValidation('SSN: 123-45-6789, this is harmful', [
+      { type: 'no_pii' },
+      { type: 'content_policy' },
+    ]);
+    expect(result.passed).toBe(false);
+    expect(result.violations).toHaveLength(2);
+    expect(result.violations.map((v) => v.type)).toContain('no_pii');
+    expect(result.violations.map((v) => v.type)).toContain('content_policy');
+  });
 });

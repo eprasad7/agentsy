@@ -59,7 +59,11 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
 
   const config = await activities.loadAgentConfig(versionId);
 
-  // 3. Build initial messages from input
+  // 3. Resolve model string (capability class → concrete model)
+  const resolvedModel = resolveModelFromConfig(config.model, config.modelSpec);
+  const resolvedFallback = config.fallbackModel ?? null;
+
+  // 4. Build initial messages from input
   const messages: Array<{ role: 'user' | 'assistant' | 'tool'; content: string; toolCallId?: string }> = [];
   if (input.input.type === 'text') {
     messages.push({ role: 'user', content: input.input.text });
@@ -71,7 +75,7 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
     messages.push({ role: 'user', content: JSON.stringify(input.input.data) });
   }
 
-  // 4. Guardrail state
+  // 5. Guardrail state
   let iteration = 0;
   let totalTokensIn = 0;
   let totalTokensOut = 0;
@@ -82,6 +86,7 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
     maxTokens?: number;
     maxCostUsd?: number;
     timeoutMs?: number;
+    outputValidation?: Array<{ type: string; config?: unknown }>;
   };
 
   const maxIterations = guardrails.maxIterations ?? 10;
@@ -89,17 +94,17 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
   const maxCostUsd = guardrails.maxCostUsd ?? 1.0;
   const timeoutMs = guardrails.timeoutMs ?? 300_000;
 
-  // 5. Build tools map for Vercel AI SDK
+  // 6. Build tools map for Vercel AI SDK
   const toolsConfig = (config.toolsConfig ?? []) as Array<{
     name: string;
     type: string;
     description?: string;
     inputSchema?: Record<string, unknown>;
     riskLevel?: string;
+    timeout?: number;
     approvalPolicy?: Record<string, unknown>;
   }>;
 
-  // Convert tool configs to Vercel AI SDK format
   const aiTools: Record<string, { description: string; parameters: Record<string, unknown> }> = {};
   for (const tool of toolsConfig) {
     if (tool.type === 'native' && tool.inputSchema) {
@@ -110,56 +115,26 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
     }
   }
 
-  // 6. Agentic loop
+  // 7. Agentic loop
   while (iteration < maxIterations) {
-    // Guardrail checks
+    // Guardrail checks (before each iteration)
     if (totalTokensIn + totalTokensOut >= maxTokens) {
-      await activities.persistRunStep({
-        runId, orgId, stepOrder: ++stepOrder,
-        type: 'guardrail',
-        output: 'max_tokens exceeded',
-      });
-      await activities.persistRun({
-        runId, status: 'timeout',
-        error: 'Max tokens guardrail triggered',
-        totalTokensIn, totalTokensOut, totalCostUsd: totalCost,
-        durationMs: Date.now() - startedAt,
-        model: config.model,
-        metadata: { guardrail_triggered: 'max_tokens' },
+      await persistGuardrailViolation(runId, orgId, ++stepOrder, 'max_tokens', resolvedModel, {
+        totalTokensIn, totalTokensOut, totalCost, startedAt,
       });
       return;
     }
 
     if (totalCost >= maxCostUsd) {
-      await activities.persistRunStep({
-        runId, orgId, stepOrder: ++stepOrder,
-        type: 'guardrail',
-        output: 'max_cost_usd exceeded',
-      });
-      await activities.persistRun({
-        runId, status: 'timeout',
-        error: 'Max cost guardrail triggered',
-        totalTokensIn, totalTokensOut, totalCostUsd: totalCost,
-        durationMs: Date.now() - startedAt,
-        model: config.model,
-        metadata: { guardrail_triggered: 'max_cost_usd' },
+      await persistGuardrailViolation(runId, orgId, ++stepOrder, 'max_cost_usd', resolvedModel, {
+        totalTokensIn, totalTokensOut, totalCost, startedAt,
       });
       return;
     }
 
     if (Date.now() - startedAt >= timeoutMs) {
-      await activities.persistRunStep({
-        runId, orgId, stepOrder: ++stepOrder,
-        type: 'guardrail',
-        output: 'timeout exceeded',
-      });
-      await activities.persistRun({
-        runId, status: 'timeout',
-        error: 'Timeout guardrail triggered',
-        totalTokensIn, totalTokensOut, totalCostUsd: totalCost,
-        durationMs: Date.now() - startedAt,
-        model: config.model,
-        metadata: { guardrail_triggered: 'timeout' },
+      await persistGuardrailViolation(runId, orgId, ++stepOrder, 'timeout', resolvedModel, {
+        totalTokensIn, totalTokensOut, totalCost, startedAt,
       });
       return;
     }
@@ -168,8 +143,8 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
 
     // LLM call
     const llmResult = await activities.llmCall({
-      model: config.model,
-      fallbackModel: config.fallbackModel,
+      model: resolvedModel,
+      fallbackModel: resolvedFallback,
       systemPrompt: config.systemPrompt,
       messages: messages as Array<{ role: 'user' | 'assistant' | 'tool'; content: string }>,
       tools: Object.keys(aiTools).length > 0 ? aiTools as Record<string, never> : undefined,
@@ -193,15 +168,42 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
 
     // No tool calls → final response
     if (llmResult.toolCalls.length === 0) {
+      // Run output validators before completing
+      const validationResult = await activities.validateOutput({
+        output: llmResult.text,
+        validators: guardrails.outputValidation,
+      });
+
+      if (!validationResult.passed) {
+        // Persist guardrail step for output violation
+        await activities.persistRunStep({
+          runId, orgId, stepOrder: ++stepOrder,
+          type: 'guardrail',
+          output: `Output validation failed: ${validationResult.violations.map((v) => v.message).join('; ')}`,
+        });
+
+        await activities.persistRun({
+          runId,
+          status: 'completed',
+          output: { type: 'text', text: llmResult.text },
+          totalTokensIn, totalTokensOut, totalCostUsd: totalCost,
+          durationMs: Date.now() - startedAt,
+          model: resolvedModel,
+          metadata: {
+            guardrail_triggered: 'output_validation',
+            violations: validationResult.violations,
+          },
+        });
+        return;
+      }
+
       await activities.persistRun({
         runId,
         status: 'completed',
         output: { type: 'text', text: llmResult.text },
-        totalTokensIn,
-        totalTokensOut,
-        totalCostUsd: totalCost,
+        totalTokensIn, totalTokensOut, totalCostUsd: totalCost,
         durationMs: Date.now() - startedAt,
-        model: config.model,
+        model: resolvedModel,
       });
       return;
     }
@@ -225,13 +227,16 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
             approvalStatus: 'pending',
           });
 
-          // Update run status
-          await activities.persistRun({ runId, status: 'running' });
+          // Set run status to awaiting_approval
+          await activities.persistRun({ runId, status: 'awaiting_approval' as never });
 
           // Wait for approval signal
           let decision: ApprovalDecision | undefined;
           setHandler(approvalSignal, (d) => { decision = d; });
           await condition(() => decision !== undefined, '1 hour');
+
+          // Resume run
+          await activities.persistRun({ runId, status: 'running' });
 
           if (!decision || decision.decision === 'denied') {
             messages.push({
@@ -248,7 +253,7 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
       const toolResult = await activities.executeNativeTool({
         toolName: toolCall.toolName,
         args: toolCall.args,
-        timeout: (toolDef as Record<string, unknown> | undefined)?.['timeout'] as number | undefined,
+        timeout: toolDef?.timeout,
       });
 
       // Persist tool step
@@ -275,25 +280,40 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
   }
 
   // Max iterations reached
-  await activities.persistRunStep({
-    runId, orgId, stepOrder: ++stepOrder,
-    type: 'guardrail',
-    output: 'max_iterations reached',
-  });
-  await activities.persistRun({
-    runId,
-    status: 'timeout',
-    error: 'Max iterations guardrail triggered',
-    totalTokensIn,
-    totalTokensOut,
-    totalCostUsd: totalCost,
-    durationMs: Date.now() - startedAt,
-    model: config.model,
-    metadata: { guardrail_triggered: 'max_iterations' },
+  await persistGuardrailViolation(runId, orgId, ++stepOrder, 'max_iterations', resolvedModel, {
+    totalTokensIn, totalTokensOut, totalCost, startedAt,
   });
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
+
+/** Resolve model from config — the model field is already resolved at version creation time. */
+function resolveModelFromConfig(model: string, _modelSpec: unknown): string {
+  return model;
+}
+
+/** Persist a guardrail violation and mark the run as timed out. */
+async function persistGuardrailViolation(
+  runId: string, orgId: string, stepOrder: number,
+  reason: string, model: string,
+  state: { totalTokensIn: number; totalTokensOut: number; totalCost: number; startedAt: number },
+) {
+  await activities.persistRunStep({
+    runId, orgId, stepOrder,
+    type: 'guardrail',
+    output: `${reason} exceeded`,
+  });
+  await activities.persistRun({
+    runId, status: 'timeout',
+    error: `Guardrail triggered: ${reason}`,
+    totalTokensIn: state.totalTokensIn,
+    totalTokensOut: state.totalTokensOut,
+    totalCostUsd: state.totalCost,
+    durationMs: Date.now() - state.startedAt,
+    model,
+    metadata: { guardrail_triggered: reason },
+  });
+}
 
 function checkApproval(
   toolDef: { riskLevel?: string; approvalPolicy?: Record<string, unknown> },

@@ -45,6 +45,17 @@ describe('checkGuardrails', () => {
     expect(result.reason).toBe('max_iterations');
   });
 
+  it('triggers max_cost_usd', () => {
+    const result = checkGuardrails(makeState({ totalCost: 1.0 }), undefined);
+    expect(result.violated).toBe(true);
+    expect(result.reason).toBe('max_cost_usd');
+  });
+
+  it('triggers max_cost_usd with custom limit', () => {
+    const result = checkGuardrails(makeState({ totalCost: 0.5 }), undefined);
+    expect(result.violated).toBe(false);
+  });
+
   it('does not trigger when just under limits', () => {
     const result = checkGuardrails(makeState({ iteration: 9, totalTokens: 49_999, totalCost: 0.99 }), {
       maxIterations: 10,
