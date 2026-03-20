@@ -12,7 +12,7 @@
     "build": "tsup",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@agentsy/shared": "workspace:*"

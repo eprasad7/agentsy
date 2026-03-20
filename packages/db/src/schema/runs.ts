@@ -1,3 +1,4 @@
+import type { RunInput, RunOutput } from '@agentsy/shared';
 import {
   doublePrecision,
   index,
@@ -8,7 +9,6 @@ import {
   timestamp,
   varchar,
 } from 'drizzle-orm/pg-core';
-import type { RunInput, RunOutput } from '@agentsy/shared';
 
 import { agentVersions } from './agent-versions';
 import { agents } from './agents';

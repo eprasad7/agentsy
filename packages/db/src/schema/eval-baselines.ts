@@ -1,5 +1,5 @@
-import { boolean, index, jsonb, pgTable, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
+import { boolean, index, jsonb, pgTable, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 
 import { agentVersions } from './agent-versions';
 import { agents } from './agents';

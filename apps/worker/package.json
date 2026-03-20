@@ -8,13 +8,14 @@
     "dev": "tsx watch src/index.ts",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@agentsy/shared": "workspace:*",
-    "@agentsy/db": "workspace:*"
+    "@agentsy/db": "workspace:*",
+    "@agentsy/shared": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^25.5.0",
     "tsup": "^8.3.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",

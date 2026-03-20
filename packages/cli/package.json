@@ -9,12 +9,13 @@
     "build": "tsup",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
     "@agentsy/shared": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^25.5.0",
     "tsup": "^8.3.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"

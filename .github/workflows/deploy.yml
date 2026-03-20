@@ -1,0 +1,31 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+  # Auto-deploy disabled until Phase 7
+  # push:
+  #   branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: false # Disabled until infra is provisioned
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy API
+        run: flyctl deploy --config apps/api/fly.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Deploy Web
+        run: flyctl deploy --config apps/web/fly.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Deploy Worker
+        run: flyctl deploy --config apps/worker/fly.toml
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

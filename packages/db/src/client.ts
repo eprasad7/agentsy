@@ -1,7 +1,7 @@
-import { drizzle as drizzlePg } from 'drizzle-orm/postgres-js';
-import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
-import postgres from 'postgres';
 import Database from 'better-sqlite3';
+import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
+import { drizzle as drizzlePg } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 
 import * as schema from './schema/index';
 

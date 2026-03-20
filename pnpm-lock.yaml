@@ -42,6 +42,9 @@ importers:
         specifier: ^5.2.0
         version: 5.8.2
     devDependencies:
+      '@types/node':
+        specifier: ^25.5.0
+        version: 25.5.0
       tsup:
         specifier: ^8.3.0
         version: 8.5.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)
@@ -89,6 +92,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/shared
     devDependencies:
+      '@types/node':
+        specifier: ^25.5.0
+        version: 25.5.0
       tsup:
         specifier: ^8.3.0
         version: 8.5.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)
@@ -108,6 +114,9 @@ importers:
         specifier: workspace:*
         version: link:../shared
     devDependencies:
+      '@types/node':
+        specifier: ^25.5.0
+        version: 25.5.0
       tsup:
         specifier: ^8.3.0
         version: 8.5.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)
@@ -206,6 +215,9 @@ importers:
         specifier: ^5.0.0
         version: 5.1.7
     devDependencies:
+      '@types/node':
+        specifier: ^25.5.0
+        version: 25.5.0
       tsup:
         specifier: ^8.3.0
         version: 8.5.1(jiti@1.21.7)(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)

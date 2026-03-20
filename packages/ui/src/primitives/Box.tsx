@@ -1,4 +1,5 @@
 import * as React from "react";
+
 import { cn } from "../lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -39,9 +40,9 @@ function BoxInner<E extends BoxElement = "div">(
   { as, className, children, ...rest }: BoxProps<E>,
   ref: React.ForwardedRef<Element>,
 ) {
-  const Component = as || "div";
+  const Component: React.ElementType = as || "div";
   return (
-    <Component ref={ref} className={cn(className)} {...rest}>
+    <Component ref={ref as React.Ref<HTMLElement>} className={cn(className)} {...rest}>
       {children}
     </Component>
   );
