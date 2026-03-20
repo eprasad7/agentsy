@@ -55,6 +55,7 @@ export type {
   MockedToolResult,
   TrajectoryStep,
   ApprovalExpectation,
+  MemoryExpectation,
 } from './types.js';
 
 export type {

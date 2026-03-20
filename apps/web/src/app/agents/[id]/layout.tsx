@@ -21,7 +21,7 @@ export default function AgentDetailLayout({ children }: { children: React.ReactN
     { label: "Overview", href: `/agents/${id}`, icon: Info },
     { label: "Config", href: `/agents/${id}/config`, icon: Settings },
     { label: "Runs", href: `/runs?agent_id=${id}`, icon: Play },
-    { label: "Evals", href: `/agents/${id}/evals`, icon: FlaskConical, disabled: true, disabledLabel: "Phase 4" },
+    { label: "Evals", href: `/evals/experiments?agent_id=${id}`, icon: FlaskConical },
     { label: "Knowledge", href: `/agents/${id}/kb`, icon: Database, disabled: true, disabledLabel: "Phase 5" },
     { label: "Tools", href: `/agents/${id}/tools`, icon: Plug, disabled: true, disabledLabel: "Phase 6" },
     { label: "Deploy", href: `/agents/${id}/deploy`, icon: Rocket, disabled: true, disabledLabel: "Phase 7" },

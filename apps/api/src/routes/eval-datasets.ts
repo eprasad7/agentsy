@@ -73,6 +73,12 @@ const createCaseSchema = z.object({
   expected_tool_calls: z.array(expectedToolCallSchema).optional(),
   expected_trajectory: z.array(trajectoryStepSchema).optional(),
   expected_approval_behavior: approvalExpectationSchema.optional(),
+  expected_citations: z.array(z.string()).optional(),
+  expected_memory_writes: z.array(z.object({
+    type: z.enum(['session_write', 'knowledge_update']),
+    key: z.string().optional(),
+    valueContains: z.string().optional(),
+  })).optional(),
   mocked_tool_results: z.array(mockedToolResultSchema).optional(),
   session_history: z.array(z.object({ role: z.string(), content: z.string() })).optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),

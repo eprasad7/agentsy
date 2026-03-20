@@ -2,12 +2,20 @@ import type { RunInput, RunOutput, ModelIdentifier } from '@agentsy/shared';
 
 // ── Dataset Types ───────────────────────────────────────────────────
 
+export interface MemoryExpectation {
+  type: 'session_write' | 'knowledge_update';
+  key?: string;
+  valueContains?: string;
+}
+
 export interface DatasetCase {
   input: string | RunInput;
   expected_output?: string | RunOutput;
   expected_tool_calls?: ExpectedToolCall[];
   expected_trajectory?: TrajectoryStep[];
   expected_approval_behavior?: ApprovalExpectation;
+  expected_citations?: string[];
+  expected_memory_writes?: MemoryExpectation[];
   mocked_tool_results?: MockedToolResult[];
   session_history?: Array<{ role: string; content: string }>;
   metadata?: Record<string, unknown>;
