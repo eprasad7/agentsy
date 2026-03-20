@@ -99,7 +99,6 @@ export interface RunCompletedEvent {
   output: RunOutput;
   output_valid?: boolean | null;
   output_validation?: { ok: boolean; errors?: Array<{ path: string; message: string }> } | null;
-  parsed_output?: unknown;
   total_tokens_in: number;
   total_tokens_out: number;
   total_cost_usd: number;

@@ -15,6 +15,7 @@ import { Redis } from 'ioredis';
 import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
+import { getDb } from '../lib/request-db.js';
 import { getTemporalClient } from '../lib/temporal.js';
 import { badRequest, notFound, validationError } from '../plugins/error-handler.js';
 
@@ -45,6 +46,7 @@ const chatCompletionSchema = z.object({
 export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
   app.post('/v1/chat/completions', async (request, reply) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = chatCompletionSchema.parse(request.body);
 
     // Reject tools override
@@ -56,7 +58,7 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
     }
 
     // Resolve agent from model field (slug or ID)
-    const agentResult = await db
+    const agentResult = await d
       .select({ id: agents.id, slug: agents.slug })
       .from(agents)
       .where(and(
@@ -71,7 +73,7 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
 
     // Resolve environment
     const envName = (body.agentsy?.environment ?? 'production') as 'development' | 'staging' | 'production';
-    const envResult = await db
+    const envResult = await d
       .select({ id: environments.id })
       .from(environments)
       .where(and(eq(environments.orgId, orgId), eq(environments.name, envName)))
@@ -84,7 +86,7 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
     if (body.agentsy?.version_id) {
       versionId = body.agentsy.version_id;
     } else {
-      const depResult = await db
+      const depResult = await d
         .select({ versionId: deployments.versionId })
         .from(deployments)
         .where(and(eq(deployments.agentId, agentId), eq(deployments.environmentId, envResult[0].id), eq(deployments.status, 'active')))
@@ -93,7 +95,7 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
       if (depResult[0]) {
         versionId = depResult[0].versionId;
       } else {
-        const latestResult = await db
+        const latestResult = await d
           .select({ id: agentVersions.id })
           .from(agentVersions)
           .where(eq(agentVersions.agentId, agentId))
@@ -130,7 +132,7 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
       ...(body.max_tokens !== undefined ? { max_tokens_override: body.max_tokens } : {}),
     };
 
-    await db.insert(runs).values({
+    await d.insert(runs).values({
       id: runId,
       orgId,
       agentId,
@@ -157,10 +159,10 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
             sessionId: body.agentsy?.session_id, environment: envName, environmentId: envResult[0].id,
           }],
         });
-        await db.update(runs).set({ temporalWorkflowId: workflowId }).where(eq(runs.id, runId));
+        await d.update(runs).set({ temporalWorkflowId: workflowId }).where(eq(runs.id, runId));
       }
     } catch (err) {
-      await db.update(runs).set({
+      await d.update(runs).set({
         status: 'failed', error: err instanceof Error ? err.message : 'Failed to start workflow',
         completedAt: new Date(), updatedAt: new Date(),
       }).where(eq(runs.id, runId));
@@ -234,13 +236,13 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
     const pollInterval = 500;
     const startTime = Date.now();
 
-    let result = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
+    let result = await d.select().from(runs).where(eq(runs.id, runId)).limit(1);
     while (
       result[0] && ['queued', 'running', 'awaiting_approval'].includes(result[0].status) &&
       Date.now() - startTime < maxWaitMs
     ) {
       await new Promise((r) => setTimeout(r, pollInterval));
-      result = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
+      result = await d.select().from(runs).where(eq(runs.id, runId)).limit(1);
     }
 
     if (!result[0]) throw notFound('Run not found');

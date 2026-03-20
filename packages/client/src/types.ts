@@ -61,6 +61,8 @@ export interface RunStep {
   cost_usd: number;
   duration_ms: number | null;
   error: string | null;
+  parsed_output: unknown;
+  output_validation: Record<string, unknown> | null;
   created_at: string;
 }
 

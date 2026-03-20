@@ -284,13 +284,13 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
           }],
         });
 
-        await db
+        await d
           .update(runs)
           .set({ temporalWorkflowId: workflowId })
           .where(eq(runs.id, runId));
       }
     } catch (err) {
-      await db
+      await d
         .update(runs)
         .set({
           status: 'failed',
@@ -325,7 +325,7 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
     const pollInterval = 500;
     const startTime = Date.now();
 
-    let result = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
+    let result = await d.select().from(runs).where(eq(runs.id, runId)).limit(1);
 
     while (
       result[0] &&
@@ -333,7 +333,7 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       Date.now() - startTime < maxWaitMs
     ) {
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
-      result = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
+      result = await d.select().from(runs).where(eq(runs.id, runId)).limit(1);
     }
 
     if (!result[0]) throw notFound('Run not found');
@@ -343,8 +343,9 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/runs/:run_id — get run
   app.get<{ Params: { run_id: string } }>('/v1/runs/:run_id', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
-    const result = await db
+    const result = await d
       .select()
       .from(runs)
       .where(and(eq(runs.id, request.params.run_id), eq(runs.orgId, orgId)))
@@ -357,6 +358,7 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/runs — list runs
   app.get('/v1/runs', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const query = listRunsSchema.parse(request.query);
 
     const conditions = [eq(runs.orgId, orgId)];
@@ -364,7 +366,7 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
     if (query.status) conditions.push(eq(runs.status, query.status as typeof runs.status.enumValues[number]));
     if (query.environment) {
       const envName = query.environment as 'development' | 'staging' | 'production';
-      const envRow = await db
+      const envRow = await d
         .select({ id: environments.id })
         .from(environments)
         .where(and(eq(environments.orgId, orgId), eq(environments.name, envName)))
@@ -389,7 +391,7 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
-    const rows = await db
+    const rows = await d
       .select()
       .from(runs)
       .where(and(...conditions))
@@ -409,9 +411,10 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/runs/:run_id/steps — get trace (with pagination)
   app.get<{ Params: { run_id: string } }>('/v1/runs/:run_id/steps', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const query = listStepsSchema.parse(request.query);
 
-    const runResult = await db
+    const runResult = await d
       .select({ id: runs.id })
       .from(runs)
       .where(and(eq(runs.id, request.params.run_id), eq(runs.orgId, orgId)))
@@ -428,7 +431,7 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
-    const rows = await db
+    const rows = await d
       .select()
       .from(runSteps)
       .where(and(...conditions))
@@ -448,8 +451,9 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/runs/:run_id/cancel — cancel run
   app.post<{ Params: { run_id: string } }>('/v1/runs/:run_id/cancel', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
 
-    const result = await db
+    const result = await d
       .select()
       .from(runs)
       .where(and(eq(runs.id, request.params.run_id), eq(runs.orgId, orgId)))
@@ -474,7 +478,6 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
     }
 
     const cancelledAt = new Date();
-    const d = getDb(request, db);
     await d
       .update(runs)
       .set({ status: 'cancelled', completedAt: cancelledAt, updatedAt: cancelledAt })
@@ -496,9 +499,10 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/runs/:run_id/approve — send approval signal
   app.post<{ Params: { run_id: string } }>('/v1/runs/:run_id/approve', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = approveSchema.parse(request.body ?? {});
 
-    const result = await db
+    const result = await d
       .select()
       .from(runs)
       .where(and(eq(runs.id, request.params.run_id), eq(runs.orgId, orgId)))
@@ -531,9 +535,10 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
   // POST /v1/runs/:run_id/deny — send denial signal
   app.post<{ Params: { run_id: string } }>('/v1/runs/:run_id/deny', async (request) => {
     const orgId = request.orgId!;
+    const d = getDb(request, db);
     const body = denySchema.parse(request.body ?? {});
 
-    const result = await db
+    const result = await d
       .select()
       .from(runs)
       .where(and(eq(runs.id, request.params.run_id), eq(runs.orgId, orgId)))

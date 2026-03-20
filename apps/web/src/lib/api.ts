@@ -155,6 +155,8 @@ export interface RunStep {
   approval_status: string | null;
   approved_by: string | null;
   approval_wait_ms: number | null;
+  parsed_output: unknown;
+  output_validation: Record<string, unknown> | null;
   metadata: Record<string, unknown> | null;
   started_at: string | null;
   completed_at: string | null;
