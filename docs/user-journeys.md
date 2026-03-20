@@ -60,6 +60,8 @@ agentsy secrets set ANTHROPIC_API_KEY sk-ant-api03-...
 # Secret ANTHROPIC_API_KEY set for production
 ```
 
+> **Local dev vs platform secrets**: `agentsy secrets set` stores the key encrypted on the platform (used in staging/production). For local development, `agentsy dev` reads from a `.env` file in your project directory. The `agentsy init` scaffold creates a `.env` template with `ANTHROPIC_API_KEY=` for you to fill in locally.
+
 **1.4 — Generate API key (for programmatic access)**
 ```
 Dashboard: Settings → API Keys → Create Key
@@ -812,6 +814,452 @@ agentsy secrets list             # List secret keys (no values)
 
 ---
 
+## Journey 9: Knowledge Base & RAG
+
+### Goal
+Developer uploads documents so the agent can answer questions from them.
+
+### Steps
+
+**9.1 — Create knowledge base (CLI)**
+```bash
+agentsy kb create --agent support-agent --name "Product Docs"
+# Created knowledge base kb_mN9vB5kP2wQx for support-agent
+```
+
+**9.2 — Upload documents**
+```bash
+agentsy kb upload --kb "Product Docs" ./docs/refund-policy.pdf ./docs/shipping-faq.md
+# Uploading 2 files to "Product Docs"...
+# ✓ refund-policy.pdf — 12 chunks (text-embedding-3-small, 1536 dims)
+# ✓ shipping-faq.md — 8 chunks
+# Total: 20 chunks indexed
+```
+
+Or via dashboard:
+```
+Dashboard: Agents → support-agent → Knowledge Base → Upload
+  Drag & drop files or click to browse
+  Supported: PDF, Markdown, TXT, HTML, DOCX
+  → Files are chunked, embedded, and indexed in pgvector
+```
+
+**9.3 — Agent uses retrieval in a run**
+
+When the agent runs, the system prompt includes a `{{knowledge}}` template variable. At runtime, the worker:
+1. Embeds the user's input with `text-embedding-3-small`
+2. Queries pgvector for the top-K most similar chunks (hybrid: vector + BM25 + RRF)
+3. Injects the retrieved chunks into the system prompt
+
+**9.4 — View retrieval in trace**
+```
+Dashboard: Runs → run_x5 → Trace
+
+  Step 2: [retrieval]
+    Query: "What is the refund window?"
+    Results: 3 chunks retrieved
+    ┌─────────────────────────────────────────┐
+    │ 1. refund-policy.pdf (chunk 4)  0.91    │
+    │    "Customers may request a full refund  │
+    │    within 30 days of purchase..."        │
+    │ 2. shipping-faq.md (chunk 2)    0.78    │
+    │    "If your order arrives damaged..."    │
+    │ 3. refund-policy.pdf (chunk 7)  0.74    │
+    │    "Refunds over $500 require..."        │
+    └─────────────────────────────────────────┘
+    Duration: 45ms
+```
+
+---
+
+## Journey 10: Connect MCP Servers
+
+### Goal
+Developer connects an external MCP server to give the agent access to third-party tools.
+
+### Steps
+
+**10.1 — Add MCP server via CLI**
+
+```typescript
+// src/agent.ts
+import { defineAgent } from "@agentsy/sdk";
+
+export default defineAgent({
+  slug: "support-agent",
+  name: "Customer Support Agent",
+  model: { class: "balanced", provider: "anthropic" },
+  systemPrompt: "...",
+  tools: [
+    // Native tools
+    getOrder,
+    // MCP server — all tools from this server are available to the agent
+    {
+      type: "mcp",
+      url: "https://mcp.acme.com/crm",
+      headers: { Authorization: "Bearer ${secret:ACME_CRM_TOKEN}" },
+    },
+  ],
+});
+```
+
+**10.2 — Add MCP server via dashboard**
+```
+Dashboard: Agents → support-agent → Tools → Add MCP Server
+  ┌────────────────────────────────────────┐
+  │ Add MCP Server                         │
+  │                                        │
+  │ URL: [https://mcp.acme.com/crm     ]  │
+  │ Auth header: [Bearer ${secret:...}  ]  │
+  │                                        │
+  │ [Discover Tools]                       │
+  │                                        │
+  │ Available tools from this server:      │
+  │ ☑ crm.get_customer                     │
+  │ ☑ crm.get_tickets                      │
+  │ ☑ crm.create_ticket                    │
+  │ ☐ crm.delete_customer (blocked by env) │
+  │                                        │
+  │              [Cancel]  [Connect]        │
+  └────────────────────────────────────────┘
+```
+
+**10.3 — Tool discovery**
+
+Clicking "Discover Tools" calls the MCP server's `tools/list` method and shows available tools with their descriptions and schemas. Users can selectively enable/disable tools.
+
+---
+
+## Journey 11: LLM-as-Judge Evals
+
+### Goal
+Developer uses an LLM judge to evaluate subjective agent quality, not just regex/exact match.
+
+### Steps
+
+**11.1 — Define LLM judge grader**
+```typescript
+// evals/quality-check.eval.ts
+import { defineDataset } from "@agentsy/eval";
+
+export default defineDataset({
+  name: "support-quality",
+  graders: [
+    {
+      type: "llmJudge",
+      name: "helpfulness",
+      model: { class: "balanced", provider: "anthropic" },
+      rubric: `Rate the agent's response on a scale of 1-5:
+        5: Fully resolves the customer's issue with clear, empathetic communication
+        4: Resolves the issue but communication could be clearer
+        3: Partially addresses the issue, misses some details
+        2: Response is relevant but does not resolve the issue
+        1: Response is off-topic, unhelpful, or harmful`,
+      scoreRange: [1, 5],
+      passThreshold: 3,
+    },
+    {
+      type: "trajectoryMatch",
+      name: "correct_tools",
+      mode: "ordered",  // tools must be called in this exact order
+    },
+  ],
+  cases: [
+    {
+      name: "empathetic-refund",
+      input: { role: "user", content: "I'm really frustrated, my order never arrived" },
+      expectedTrajectory: ["get_order", "get_shipping_status", "issue_refund"],
+      context: {
+        sessionHistory: [],
+      },
+    },
+  ],
+});
+```
+
+**11.2 — Run with LLM judge**
+```bash
+agentsy eval run --dataset evals/quality-check.eval.ts
+
+# Running experiment: support-quality (1 case, 2 graders)
+#
+# ┌────────────────────┬────────────┬────────┬──────────┐
+# │ Case               │ Grader     │ Score  │ Status   │
+# ├────────────────────┼────────────┼────────┼──────────┤
+# │ empathetic-refund  │ helpfulness│ 4/5    │ ✓ Pass   │
+# │ empathetic-refund  │ correct_tools│ 1.00 │ ✓ Pass   │
+# └────────────────────┴────────────┴────────┴──────────┘
+#
+# LLM judge reasoning (helpfulness):
+#   "The agent acknowledged the customer's frustration, looked up the order,
+#    checked shipping status, and proactively offered a refund. Communication
+#    was clear but could have been more empathetic in the opening response."
+#
+# Judge cost: $0.004 (1 judge call)
+# Total cost: $0.016 (agent run + judge)
+```
+
+---
+
+## Journey 12: Add Failing Run to Eval Dataset
+
+### Goal
+Developer finds a bad agent response in production and adds it to the eval dataset with one click.
+
+### Steps
+
+**12.1 — Find the bad run**
+```
+Dashboard: Runs → run_x3 (✗ Failed or poor response)
+```
+
+**12.2 — Add to eval dataset**
+```
+Run Detail → [Add to Eval Dataset]
+
+┌──────────────────────────────────────────────────────┐
+│  Add to Eval Dataset                                 │
+│                                                      │
+│  Dataset: [support-basic ▾]                          │
+│                                                      │
+│  Input (from run):                                   │
+│  "Refund my $2000 order ORD-55555"                   │
+│                                                      │
+│  Expected output:                                    │
+│  [Cannot process automatically, escalate to human ]  │
+│                                                      │
+│  Expected tool calls:                                │
+│  [get_order] (auto-populated from run trace)         │
+│                                                      │
+│  Graders:                                            │
+│  ☑ Output matches regex                              │
+│  ☑ Tool call sequence                                │
+│  ☐ LLM judge (helpfulness)                           │
+│                                                      │
+│  Mock tool results:                                  │
+│  get_order → { id: "ORD-55555", total: 2000 }       │
+│  (auto-populated from actual run trace)              │
+│                                                      │
+│                   [Cancel]  [Add Case]               │
+└──────────────────────────────────────────────────────┘
+```
+
+The system auto-populates input, tool calls, and tool results from the run trace. Developer adds the expected output and selects graders. This creates a new eval case in the dataset.
+
+---
+
+## Journey 13: Agent Dashboard Overview
+
+### Goal
+Developer views high-level health metrics for an agent.
+
+### Steps
+
+```
+Dashboard: Agents → support-agent → Overview
+
+┌──────────────────────────────────────────────────────┐
+│  support-agent                    v3 (production)    │
+├──────────────────────────────────────────────────────┤
+│                                                      │
+│  Last 24 hours                                       │
+│  ┌────────────┬────────────┬────────────┬──────────┐ │
+│  │ Success    │ Avg Cost   │ Avg Latency│ Errors   │ │
+│  │   97.2%    │   $0.012   │   3.4s     │   2.8%   │ │
+│  │ ▁▂▃▃▄▅▅▆▇ │ ▅▄▃▃▄▅▃▄▃ │ ▃▄▅▃▄▅▆▅▃ │ ▁▁▁▂▁▁▃▁ │ │
+│  └────────────┴────────────┴────────────┴──────────┘ │
+│                                                      │
+│  Top errors (last 24h):                              │
+│  • tool_error: salesforce.query timeout (4x)         │
+│  • max_iterations: agent looped on refund flow (2x)  │
+│                                                      │
+│  Recent runs:                                        │
+│  ┌─────────┬──────────┬────────┬───────┬──────────┐  │
+│  │ Run ID  │ Status   │ Steps  │ Cost  │ Time     │  │
+│  ├─────────┼──────────┼────────┼───────┼──────────┤  │
+│  │ run_x1  │ ✓ Done   │ 4      │$0.012 │ 3.2s     │  │
+│  │ run_x2  │ ⚠ Waiting│ 2      │$0.008 │ paused   │  │
+│  │ run_x3  │ ✗ Failed │ 1      │$0.003 │ 0.8s     │  │
+│  └─────────┴──────────┴────────┴───────┴──────────┘  │
+│                                                      │
+│  Eval baseline: 3/3 passed (0.93 avg) — set 2h ago  │
+│                                                      │
+│  [View All Runs]  [Run Eval]  [Deploy New Version]   │
+│                                                      │
+└──────────────────────────────────────────────────────┘
+```
+
+---
+
+## Journey 14: Fallback Model Configuration
+
+### Goal
+Developer configures a fallback model so the agent continues working if the primary provider is down.
+
+### Steps
+
+**14.1 — Configure fallback in agent definition**
+```typescript
+export default defineAgent({
+  slug: "support-agent",
+  name: "Customer Support Agent",
+  model: { class: "balanced", provider: "anthropic" },
+  fallbackModel: { class: "balanced", provider: "openai" },
+  // ...
+});
+```
+
+**14.2 — Fallback fires in production**
+```
+Dashboard: Runs → run_x8
+
+  Trace:
+  Step 1: [llm_call]
+    Model: claude-sonnet-4 (anthropic)
+    Status: ✗ Provider error (503 Service Unavailable)
+    → Falling back to openai/balanced
+
+  Step 1 (retry): [llm_call]
+    Model: gpt-4o (openai) — FALLBACK
+    Status: ✓ Success
+    Tokens: 1,200 in / 340 out
+
+  ⚠ Fallback used: anthropic was unavailable, routed to openai.
+  Run completed successfully via fallback provider.
+```
+
+**14.3 — Fallback appears in logs**
+```bash
+agentsy logs --agent support-agent --tail
+# 2026-03-19T15:01:02Z [run_x8] fallback  anthropic → openai (503)
+# 2026-03-19T15:01:03Z [run_x8] llm_call  gpt-4o 1200/340 tokens
+# 2026-03-19T15:01:04Z [run_x8] done      3 steps, $0.015, 4.1s (fallback used)
+```
+
+---
+
+## Journey 15: CI/CD Integration
+
+### Goal
+Developer adds eval checks to their CI pipeline so broken agents can't be deployed.
+
+### Steps
+
+**15.1 — Add eval step to GitHub Actions**
+```yaml
+# .github/workflows/agent-ci.yml
+name: Agent CI
+on: [pull_request]
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - run: npx agentsy eval run --dataset evals/support-cases.eval.ts --ci
+        env:
+          AGENTSY_API_KEY: ${{ secrets.AGENTSY_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+**15.2 — `--ci` mode output**
+
+The `--ci` flag outputs machine-readable results and exits with code 1 on regression:
+
+```
+$ npx agentsy eval run --dataset evals/support-cases.eval.ts --ci
+
+{"experiment_id":"exp_abc","passed":3,"failed":0,"total":3,"avg_score":0.93,"regressions":0}
+
+# Exit code 0 — no regressions
+```
+
+If regressions are detected:
+```
+{"experiment_id":"exp_def","passed":2,"failed":1,"total":3,"avg_score":0.75,"regressions":1}
+Error: 1 regression detected vs baseline. See details at:
+https://app.agentsy.com/evals/exp_def
+
+# Exit code 1 — blocks the PR
+```
+
+**15.3 — PR comment (optional)**
+```bash
+npx agentsy eval run --dataset evals/support-cases.eval.ts --ci --pr-comment
+```
+
+Posts a summary comment to the PR:
+
+> **Agentsy Eval Results** — support-basic
+> 3/3 passed | Avg score: 0.93 | No regressions vs baseline
+> Cost: $0.031 | [View experiment →](https://app.agentsy.com/evals/exp_abc)
+
+---
+
+## Journey 16: Alerting & Notifications
+
+### Goal
+Developer gets notified when agent health degrades in production.
+
+### Steps
+
+**16.1 — Configure alerts via dashboard**
+```
+Dashboard: Settings → Alerts → Create Alert
+
+┌──────────────────────────────────────────────────────┐
+│  Create Alert Rule                                   │
+│                                                      │
+│  Name: [Error rate spike                          ]  │
+│  Agent: [All agents ▾]                               │
+│  Environment: [Production ▾]                         │
+│                                                      │
+│  Condition:                                          │
+│  When [error_rate] is [above] [5%] for [15 minutes]  │
+│                                                      │
+│  Notify via:                                         │
+│  ☑ Email (team admins)                               │
+│  ☑ Webhook (posts to your configured webhook URL)    │
+│  ☐ Slack (coming P2)                                 │
+│                                                      │
+│                  [Cancel]  [Create Alert]             │
+└──────────────────────────────────────────────────────┘
+```
+
+**16.2 — Alert fires**
+
+```
+Email:
+  Subject: ⚠ Agentsy Alert: support-agent error rate at 8.2%
+  Body:
+    Agent: support-agent (production)
+    Metric: Error rate
+    Current value: 8.2% (threshold: 5%)
+    Window: last 15 minutes
+    Top errors:
+    • tool_error: salesforce.query timeout (12x)
+
+    View dashboard: https://app.agentsy.com/agents/support-agent
+```
+
+**16.3 — In-app notification badge**
+
+Dashboard shows a notification bell with unread count:
+```
+┌──────────────────────────────────────────────────────┐
+│  Agentsy      Agents  Runs  Evals  Settings    🔔 2  │
+├──────────────────────────────────────────────────────┤
+│  Notifications:                                      │
+│  • ⚠ Error rate spike on support-agent (8.2%)  2m    │
+│  • ⚠ Approval pending on run_x2                15m   │
+└──────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Journey Summary
 
 | Journey | Primary Surface | Key Screens / Commands |
@@ -824,3 +1272,11 @@ agentsy secrets list             # List secret keys (no values)
 | 6. Monitor & Debug | Dashboard + CLI | Runs → Detail, `agentsy logs` |
 | 7. API Integration | Code | `@agentsy/client` SDK |
 | 8. Team Collaboration | Dashboard | Settings → Team, Environments, Usage |
+| 9. Knowledge Base & RAG | CLI + Dashboard | `agentsy kb upload`, Agents → Knowledge Base |
+| 10. MCP Server Connections | CLI + Dashboard | Agent config, Agents → Tools |
+| 11. LLM-as-Judge Evals | CLI + Dashboard | Custom graders, judge rubrics |
+| 12. Add Run to Eval Dataset | Dashboard | Run Detail → Add to Eval Dataset |
+| 13. Agent Dashboard Overview | Dashboard | Agents → Overview (sparklines) |
+| 14. Fallback Model Config | CLI + Dashboard | Agent config, trace viewer |
+| 15. CI/CD Integration | CLI + GitHub Actions | `agentsy eval run --ci` |
+| 16. Alerting & Notifications | Dashboard | Settings → Alerts, notification bell |

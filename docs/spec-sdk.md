@@ -3181,16 +3181,21 @@ const secretsSetCommand = new Command("set")
  *   -e, --env <env>   Environment scope [default: production]
  *
  * Behavior:
- *   Shows the secret metadata (name, environment, last rotated) but NOT the value.
- *   To see the value, use --reveal (requires confirmation).
+ *   Shows the secret metadata (name, environment, last rotated, last accessed) but NEVER the value.
+ *   Secrets are write-only. Plaintext values cannot be retrieved after creation.
+ *   To change a secret, use `agentsy secrets set` to overwrite it.
  *
- *   --reveal   Show the actual secret value (prompts for confirmation)
+ * Output:
+ *   Key:            GITHUB_TOKEN
+ *   Environment:    production
+ *   Last rotated:   2026-03-15T10:30:00Z
+ *   Last accessed:  2026-03-19T14:32:48Z
+ *   Created:        2026-03-01T00:00:00Z
  */
 const secretsGetCommand = new Command("get")
-  .description("Get secret metadata")
+  .description("Get secret metadata (value is never shown)")
   .argument("<key>", "Secret key name")
   .option("-e, --env <env>", "Environment", "production")
-  .option("--reveal", "Show secret value (requires confirmation)")
   .action(async (key, options) => { /* ... */ });
 
 /**

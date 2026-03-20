@@ -111,6 +111,7 @@ This separation means beta users can define agents, connect tools, run evals, an
 | R-1.6 | Configurable max iterations (default: 10) | Beta Core | Prevent infinite loops |
 | R-1.7 | Configurable max tokens per run (default: 50K) | Beta Core | Cost circuit breaker |
 | R-1.8 | Configurable timeout per run (default: 5 min) | Beta Core | Prevent runaway agents |
+| R-1.8b | Configurable max cost per run in USD (default: $1.00) | Beta Core | Cost circuit breaker — kills run if estimated LLM spend exceeds threshold |
 | R-1.9 | Support for Anthropic Claude models (reasoning + fast tiers) | Beta Core | Provider capability class, not model SKUs — see §5.10 |
 | R-1.10 | Support for OpenAI models (reasoning + fast tiers) | Beta Core | Provider capability class, not model SKUs — see §5.10 |
 | R-1.11 | Fallback model configuration | Beta Core | If primary provider is down, route to fallback |
@@ -264,7 +265,7 @@ interface MemoryExpectation {
 | R-7.2 | REST API: `POST /v1/agents/{id}/run` with `async: true` (returns run ID) | Beta Core | For long-running agents |
 | R-7.3 | REST API: `GET /v1/runs/{id}` (poll async run status/result) | Beta Core | Status + result when complete |
 | R-7.4 | REST API: OpenAI-compatible shape option (`/v1/chat/completions`) | P0 | Drop-in replacement for OpenAI SDK |
-| R-7.5 | TypeScript SDK: `agentsy.agents.run()`, `agentsy.agents.stream()` | Beta Core | Type-safe, streaming-first |
+| R-7.5 | TypeScript SDK: `client.agents.run()`, `client.agents.stream()` via `@agentsy/client` | Beta Core | Type-safe, streaming-first |
 | R-7.6 | API key authentication (per-organization) | Beta Core | `Authorization: Bearer sk-agentsy-...` |
 | R-7.7 | Session management: `session_id` parameter for multi-turn conversations | P0 | Resume conversations |
 | R-7.8 | Python SDK | P1 | Same interface as TypeScript |
@@ -303,7 +304,7 @@ Instead of hardcoding model SKUs (which change every few months), we define **pr
 | `reasoning` | Strongest reasoning, extended thinking, highest accuracy | Complex agent tasks, multi-step planning | Claude Opus, GPT-5.4, o-series |
 | `balanced` | Strong reasoning, good speed, cost-effective | Default agent execution, most production use | Claude Sonnet, GPT-4o |
 | `fast` | Fastest response, lowest cost, good enough for simple tasks | Classification, routing, extraction | Claude Haiku, GPT-4o-mini |
-| `embedding` | Text embedding for vector search | Knowledge base indexing, semantic similarity | text-embedding-3-large, voyage-3 |
+| `embedding` | Text embedding for vector search | Knowledge base indexing, semantic similarity | text-embedding-3-small (default), text-embedding-3-large, voyage-3 |
 
 **Rules**:
 - Agent configs specify a capability class, not a model name: `model: { class: 'balanced', provider: 'anthropic' }`
@@ -672,7 +673,7 @@ These resolve contradictions the audit found across our doc suite.
 | **Temporal Cloud** | Managed durable execution | Low | Self-hosted Temporal |
 | **Better Auth** | Auth library in agentsy-api (email, OAuth, orgs, sessions) | None | Logto/Keycloak for enterprise SSO |
 | **E2B** | Code execution + browser sandbox (P1) | Medium | Self-hosted Firecracker |
-| **PostgreSQL 16** | Self-managed on Fly.io (Machine + volume) | Low | Managed Postgres (Neon, Supabase) |
+| **PostgreSQL 16** | Fly Managed Postgres (MPG) + pgvector | Low | Neon, Supabase |
 | **Redis 7** | Self-managed on Fly.io (Machine + volume) | Low | Managed Redis (Upstash) |
 | **Tigris** | Fly-native S3-compatible object storage | None | Any S3-compatible store |
 | **Vercel AI SDK** | Provider abstraction | Medium | Custom provider adapters |

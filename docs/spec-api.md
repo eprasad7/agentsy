@@ -2556,6 +2556,46 @@ GET /v1/eval/baselines/active
 
 Returns an `EvalBaseline` object, or `404` if no baseline is set.
 
+### 7.17 Create Eval Case from Run
+
+Creates a new eval case in a dataset by extracting input, output, tool calls, and tool results from an existing run trace. Used by the "Add to Eval Dataset" button in the dashboard.
+
+```
+POST /v1/eval/datasets/:dataset_id/cases/from-run
+```
+
+**Request body:**
+
+```typescript
+interface CreateCaseFromRunRequest {
+  run_id: string;              // Required. The run to extract data from.
+  expected_output?: RunOutput; // Optional override. If omitted, uses the run's actual output.
+  expected_tool_calls?: string[]; // Optional override. If omitted, extracts from run trace.
+  graders?: string[];          // Optional. Grader names to apply to this case.
+}
+```
+
+**Response: `201 Created`**
+
+Returns the created eval case. The system auto-populates:
+- `input` from `runs.input`
+- `expected_output` from `runs.output` (unless overridden)
+- `expected_tool_calls` from the run's `tool_call` steps (unless overridden)
+- `mocked_tool_results` from the actual tool results in the run trace
+- `metadata.source_run_id` set to the originating run ID
+
+**Example:**
+
+```bash
+curl -X POST https://api.agentsy.com/v1/eval/datasets/eds_mN7vB4kP1wQz/cases/from-run \
+  -H "Authorization: Bearer sk-agentsy-..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "run_id": "run_hT2cF8nM6jLz",
+    "expected_output": { "type": "text", "text": "Cannot process automatically, escalating to human agent." }
+  }'
+```
+
 ---
 
 ## 8. Deployments
@@ -2713,6 +2753,9 @@ interface Environment {
   id: string;                  // env_...
   org_id: string;              // org_...
   name: "development" | "staging" | "production";
+  tool_allow_list: string[] | null;   // If set, only these tool names can execute. Null = all allowed.
+  tool_deny_list: string[] | null;    // If set, these tools are blocked (takes precedence over allow list).
+  require_approval_for_write_tools: boolean; // If true, all write/admin tools require human approval.
   created_at: string;          // ISO 8601
   updated_at: string;          // ISO 8601
 }
@@ -2784,6 +2827,9 @@ POST /v1/environments
 ```typescript
 interface CreateEnvironmentRequest {
   name: string;                // Required. Must be unique per org
+  tool_allow_list?: string[];  // Optional. Restrict to these tool names only.
+  tool_deny_list?: string[];   // Optional. Block these tools (takes precedence).
+  require_approval_for_write_tools?: boolean; // Optional. Default false.
 }
 ```
 
@@ -2791,7 +2837,41 @@ interface CreateEnvironmentRequest {
 
 Returns the created `Environment` object.
 
-### 9.4 Delete Environment
+### 9.4 Update Environment
+
+Updates an environment's tool policy. The `name` of standard environments cannot be changed.
+
+```
+PATCH /v1/environments/:environment_id
+```
+
+**Request body:**
+
+```typescript
+interface UpdateEnvironmentRequest {
+  tool_allow_list?: string[] | null;  // Set to null to allow all tools.
+  tool_deny_list?: string[] | null;   // Set to null to remove deny list.
+  require_approval_for_write_tools?: boolean;
+}
+```
+
+**Response: `200 OK`**
+
+Returns the updated `Environment` object.
+
+**Example: Lock down production to read-only tools + require approval for writes:**
+
+```bash
+curl -X PATCH https://api.agentsy.com/v1/environments/env_rL7wK4xP2dGs \
+  -H "Authorization: Bearer sk-agentsy-..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool_deny_list": ["delete_customer", "drop_table"],
+    "require_approval_for_write_tools": true
+  }'
+```
+
+### 9.5 Delete Environment
 
 Deletes a custom environment. The three standard environments cannot be deleted.
 
@@ -3854,9 +3934,98 @@ Clients should implement automatic reconnection with exponential backoff. The se
 
 ---
 
-## 16. Webhook Events
+## 16. Webhooks
 
-Agentsy can send HTTP POST requests to a registered URL when certain events occur. Webhooks are configured per-organization via the dashboard or API.
+Agentsy can send HTTP POST requests to a registered URL when certain events occur. Webhooks are configured per-organization.
+
+### 16.1 Register Webhook
+
+```
+POST /v1/webhooks
+```
+
+**Request body:**
+
+```typescript
+interface CreateWebhookRequest {
+  url: string;                 // Required. HTTPS URL to receive webhook events.
+  events: string[];            // Required. Event types to subscribe to: "run.completed", "run.failed", "eval.completed"
+  description?: string;        // Optional. Human-readable description.
+}
+```
+
+**Response: `201 Created`**
+
+```typescript
+interface Webhook {
+  id: string;                  // whk_...
+  org_id: string;              // org_...
+  url: string;
+  events: string[];
+  secret: string;              // HMAC signing secret. Shown ONCE on creation. Use to verify X-Agentsy-Signature.
+  description: string | null;
+  active: boolean;
+  created_at: string;          // ISO 8601
+  updated_at: string;          // ISO 8601
+}
+```
+
+The `secret` field is only returned on creation. Store it securely — it cannot be retrieved again.
+
+### 16.2 List Webhooks
+
+```
+GET /v1/webhooks
+```
+
+**Response: `200 OK`**
+
+Returns a list of `Webhook` objects (without `secret` field).
+
+### 16.3 Update Webhook
+
+```
+PATCH /v1/webhooks/:webhook_id
+```
+
+**Request body:**
+
+```typescript
+interface UpdateWebhookRequest {
+  url?: string;
+  events?: string[];
+  description?: string;
+  active?: boolean;            // Set to false to disable without deleting.
+}
+```
+
+**Response: `200 OK`**
+
+Returns the updated `Webhook` object (without `secret`).
+
+### 16.4 Delete Webhook
+
+```
+DELETE /v1/webhooks/:webhook_id
+```
+
+**Response: `204 No Content`**
+
+### 16.5 Rotate Webhook Secret
+
+Generates a new signing secret. The old secret stops working immediately.
+
+```
+POST /v1/webhooks/:webhook_id/rotate-secret
+```
+
+**Response: `200 OK`**
+
+```typescript
+interface RotateSecretResponse {
+  secret: string;              // New HMAC signing secret. Shown ONCE.
+}
+```
 
 ### Webhook Delivery
 

@@ -58,13 +58,15 @@
 ```typescript
 // This is what developers write
 export default agentsy.defineAgent({
-  name: "support-agent",
-  model: "claude-sonnet",
+  slug: "support-agent",
+  name: "Customer Support Agent",
+  model: { class: "balanced", provider: "anthropic" },
   systemPrompt: "You are a customer support agent...",
   tools: [getOrder, getRefundPolicy, sendReply],
   guardrails: {
     maxIterations: 10,
     maxTokens: 50_000,
+    maxCostUsd: 1.00,
     outputValidation: [noPII, onTopic],
   },
 });
@@ -578,13 +580,14 @@ agentsy/
     web/          # Next.js dashboard
     api/          # Fastify API server
     worker/       # Temporal worker
-    cli/          # CLI tool
   packages/
-    sdk/          # TypeScript SDK (published to npm)
-    db/           # Drizzle schema + migrations
-    ui/           # Shared React components
-    eval/         # Eval engine (published to npm)
-    shared/       # Shared types and utilities
+    sdk/          # @agentsy/sdk — agent definition (published)
+    client/       # @agentsy/client — API client (published)
+    eval/         # @agentsy/eval — eval engine (published)
+    cli/          # @agentsy/cli — CLI tool (published)
+    db/           # @agentsy/db — Drizzle schema + migrations (internal)
+    ui/           # @agentsy/ui — shared React components (internal)
+    shared/       # @agentsy/shared — shared types + utilities (internal)
 ```
 
 **Why Turborepo**: Fast incremental builds, good caching, simpler than Nx, native pnpm workspace support.

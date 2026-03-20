@@ -137,6 +137,7 @@ export const environmentTypeEnum = pgEnum("environment_type", [
 export const runStatusEnum = pgEnum("run_status", [
   "queued",
   "running",
+  "awaiting_approval",  // Run is paused waiting for human approval of a write/admin tool
   "completed",
   "failed",
   "cancelled",
@@ -500,6 +501,15 @@ export const environments = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
     name: environmentTypeEnum("name").notNull(),
+    toolAllowList: jsonb("tool_allow_list").$type<string[] | null>(),
+      // If null, all tools are allowed. If set, only these tool names can execute.
+      // Example: ["get_order", "get_refund_policy"] — blocks write tools in staging.
+    toolDenyList: jsonb("tool_deny_list").$type<string[] | null>(),
+      // If set, these tools are explicitly blocked (takes precedence over allow list).
+    requireApprovalForWriteTools: boolean("require_approval_for_write_tools")
+      .notNull()
+      .default(false),
+      // If true, all tools with riskLevel "write" or "admin" require human approval in this environment.
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -1310,7 +1320,43 @@ export const tenantSecrets = pgTable(
 
 ---
 
-### 3.20 usage_daily
+### 3.20 webhooks
+
+Per-organization webhook registrations for event delivery.
+
+```typescript
+export const webhooks = pgTable(
+  "webhooks",
+  {
+    id: varchar("id", { length: 30 }).primaryKey(), // whk_...
+    orgId: varchar("org_id", { length: 30 })
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    url: varchar("url", { length: 2048 }).notNull(),
+    events: jsonb("events").$type<string[]>().notNull(),
+      // Subscribed event types: "run.completed", "run.failed", "eval.completed"
+    secretHash: varchar("secret_hash", { length: 64 }).notNull(),
+      // SHA-256 hash of the HMAC signing secret (plaintext returned once on creation)
+    description: text("description"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("webhooks_org_id_idx").on(table.orgId),
+  ]
+);
+```
+
+**RLS**: `org_id = current_setting('app.org_id')`.
+
+---
+
+### 3.21 usage_daily
 
 Pre-aggregated daily usage metrics per organization. Populated by a nightly aggregation job (and updated in near-real-time via incremental counters in Redis that flush to Postgres).
 
