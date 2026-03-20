@@ -16,6 +16,7 @@ import { z } from 'zod';
 import type { DbClient } from '../lib/db.js';
 import { badRequest, notFound } from '../plugins/error-handler.js';
 import { getTemporalClient } from '../lib/temporal.js';
+import { handleSSEConnection } from '../streaming/sse-handler.js';
 
 // ── Zod Schemas ─────────────────────────────────────────────────────
 
@@ -280,7 +281,13 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       };
     }
 
-    // Stream mode: SSE is Phase 3, fall back to sync
+    // Stream mode: SSE via Redis pub/sub
+    if (body.stream) {
+      const lastEventId = request.headers['last-event-id'] as string | undefined;
+      await handleSSEConnection(runId, reply, lastEventId);
+      return;
+    }
+
     // Sync mode: poll until complete (with timeout)
     const maxWaitMs = 300_000;
     const pollInterval = 500;
