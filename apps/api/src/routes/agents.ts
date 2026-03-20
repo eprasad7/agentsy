@@ -116,9 +116,15 @@ export function agentRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/agents — list agents
   app.get('/v1/agents', async (request) => {
     const orgId = request.orgId!;
-    const { limit, cursor, order } = paginationSchema.parse(request.query);
+    const query = request.query as Record<string, string>;
+    const { limit, cursor, order } = paginationSchema.parse(query);
 
     const conditions = [eq(agents.orgId, orgId), isNull(agents.deletedAt)];
+
+    // Optional slug filter for lookup-by-slug
+    if (query['slug']) {
+      conditions.push(eq(agents.slug, query['slug']));
+    }
 
     if (cursor) {
       const decoded = decodeCursor(cursor);

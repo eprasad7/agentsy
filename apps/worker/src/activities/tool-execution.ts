@@ -66,7 +66,10 @@ export async function executeNativeTool(input: ToolExecInput): Promise<ToolExecR
     return { output, truncated: false, durationMs: Date.now() - startTime };
   }
 
-  // ── Live mode or non-eval (normal execution): fall through to real execution ──
+  // ── Live mode or non-eval: fall through to platform tool execution ──
+  // NOTE: Real tool execution requires the runtime sandbox (E2B, Phase 11.5).
+  // Until then, this returns a stub result. The mock and dry-run paths above
+  // are fully functional for eval workflows.
 
   try {
     // Platform mode: tool execution is delegated to a sandboxed runtime.

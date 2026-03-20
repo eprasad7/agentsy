@@ -250,9 +250,15 @@ export function evalDatasetRoutes(app: FastifyInstance, db: DbClient): void {
   // GET /v1/eval/datasets — list datasets
   app.get('/v1/eval/datasets', async (request) => {
     const orgId = request.orgId!;
-    const { limit, cursor, order } = paginationSchema.parse(request.query);
+    const query = request.query as Record<string, string>;
+    const { limit, cursor, order } = paginationSchema.parse(query);
 
     const conditions = [eq(evalDatasets.orgId, orgId), isNull(evalDatasets.deletedAt)];
+
+    // Optional name filter for lookup-by-name
+    if (query['name']) {
+      conditions.push(eq(evalDatasets.name, query['name']));
+    }
 
     if (cursor) {
       const decoded = decodeCursor(cursor);
