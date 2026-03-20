@@ -103,16 +103,32 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
       }
     }
 
-    // Extract input from messages — last user message is the input
+    // Extract input from messages — use full messages array for context
     const lastUserMsg = [...body.messages].reverse().find((m) => m.role === 'user');
     if (!lastUserMsg) throw badRequest('At least one user message is required');
 
-    const normalizedInput: RunInput = { type: 'text', text: lastUserMsg.content };
+    // If there are prior messages, use the messages format for full context
+    // Otherwise, just pass the text
+    let normalizedInput: RunInput;
+    if (body.messages.length > 1) {
+      normalizedInput = {
+        type: 'messages',
+        messages: body.messages.map((m) => ({ role: m.role, content: m.content })),
+      };
+    } else {
+      normalizedInput = { type: 'text', text: lastUserMsg.content };
+    }
 
     // Create run
     const runId = newId('run');
     const now = new Date();
-    const metadata: RunMetadata = { source: 'api', ...(body.agentsy?.metadata ?? {}) };
+    const metadata: RunMetadata = {
+      source: 'api',
+      ...(body.agentsy?.metadata ?? {}),
+      // Pass temperature/max_tokens overrides via metadata
+      ...(body.temperature !== undefined ? { temperature_override: body.temperature } : {}),
+      ...(body.max_tokens !== undefined ? { max_tokens_override: body.max_tokens } : {}),
+    };
 
     await db.insert(runs).values({
       id: runId,
