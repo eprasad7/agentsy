@@ -1,6 +1,7 @@
 "use client";
 
-import { FlaskConical } from "lucide-react";
+import { Database, FlaskConical } from "lucide-react";
+import Link from "next/link";
 
 export default function EvalsPage() {
   return (
@@ -12,15 +13,36 @@ export default function EvalsPage() {
         </p>
       </div>
 
-      <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-surface-card px-6 py-16 text-center">
-        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary-100 text-primary-600">
-          <FlaskConical className="h-6 w-6" />
-        </div>
-        <h2 className="text-md font-semibold text-text-primary">Coming in Phase 4</h2>
-        <p className="mt-2 max-w-md text-sm text-text-secondary">
-          The eval engine will let you run datasets against your agents, grade
-          outputs, and track accuracy over time.
-        </p>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Link
+          href="/evals/datasets"
+          className="group rounded-xl border border-border bg-surface-card p-6 transition-colors hover:bg-surface-hover"
+        >
+          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary-100 text-primary-600">
+            <Database className="h-5 w-5" />
+          </div>
+          <h2 className="text-md font-semibold text-text-primary group-hover:text-primary-600">
+            Datasets
+          </h2>
+          <p className="mt-1 text-sm text-text-secondary">
+            Manage test datasets with cases for evaluating agent behavior.
+          </p>
+        </Link>
+
+        <Link
+          href="/evals/experiments"
+          className="group rounded-xl border border-border bg-surface-card p-6 transition-colors hover:bg-surface-hover"
+        >
+          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-primary-100 text-primary-600">
+            <FlaskConical className="h-5 w-5" />
+          </div>
+          <h2 className="text-md font-semibold text-text-primary group-hover:text-primary-600">
+            Experiments
+          </h2>
+          <p className="mt-1 text-sm text-text-secondary">
+            View experiment results, scores, and per-case details.
+          </p>
+        </Link>
       </div>
     </div>
   );

@@ -167,6 +167,59 @@ export interface Session {
   updated_at: string;
 }
 
+// ── Eval types ─────────────────────────────────────────────────────
+
+export interface EvalDataset {
+  id: string;
+  org_id: string;
+  name: string;
+  description: string | null;
+  version: number;
+  case_count: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EvalExperiment {
+  id: string;
+  org_id: string;
+  dataset_id: string;
+  agent_id: string;
+  version_id: string;
+  name: string | null;
+  status: string;
+  summary_scores: Record<string, number> | null;
+  total_cases: number;
+  passed_cases: number;
+  failed_cases: number;
+  total_cost_usd: number;
+  total_duration_ms: number | null;
+  config: Record<string, unknown> | null;
+  error: string | null;
+  commit_sha: string | null;
+  pr_number: number | null;
+  ci_run_url: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EvalExperimentResult {
+  id: string;
+  experiment_id: string;
+  case_id: string;
+  org_id: string;
+  run_id: string | null;
+  output: string | null;
+  scores: Record<string, { score: number; name: string; graderType: string; reasoning?: string }> | null;
+  passed: boolean | null;
+  duration_ms: number | null;
+  cost_usd: number;
+  error: string | null;
+  created_at: string;
+}
+
 // ── Core client ─────────────────────────────────────────────────────
 
 const BASE_URL =
@@ -386,6 +439,28 @@ export const apiClient = {
       },
     ) {
       return request<Environment>("PATCH", `/v1/environments/${envId}`, body);
+    },
+  },
+  // ── Eval Datasets ─────────────────────────────────────────────────
+  evalDatasets: {
+    list(params?: { limit?: string; cursor?: string }) {
+      return request<CursorPage<EvalDataset>>("GET", "/v1/eval/datasets", undefined, params);
+    },
+    get(datasetId: string) {
+      return request<EvalDataset>("GET", `/v1/eval/datasets/${datasetId}`);
+    },
+  },
+
+  // ── Eval Experiments ─────────────────────────────────────────────
+  evalExperiments: {
+    list(params?: { limit?: string; cursor?: string; agent_id?: string; dataset_id?: string; status?: string }) {
+      return request<CursorPage<EvalExperiment>>("GET", "/v1/eval/experiments", undefined, params);
+    },
+    get(experimentId: string) {
+      return request<EvalExperiment>("GET", `/v1/eval/experiments/${experimentId}`);
+    },
+    results(experimentId: string, params?: { limit?: string; cursor?: string }) {
+      return request<CursorPage<EvalExperimentResult>>("GET", `/v1/eval/experiments/${experimentId}/results`, undefined, params);
     },
   },
 } as const;
