@@ -15,6 +15,7 @@ import { environmentRoutes } from './routes/environments.js';
 import { healthRoutes } from './routes/health.js';
 import { onboardingRoutes } from './routes/onboarding.js';
 import { organizationRoutes, memberRoutes } from './routes/organizations.js';
+import { agentRoutes, agentVersionRoutes } from './routes/agents.js';
 import { secretRoutes } from './routes/secrets.js';
 
 const app = Fastify({
@@ -76,6 +77,8 @@ async function start() {
     apiKeyRoutes(app, db);
     secretRoutes(app, db);
     environmentRoutes(app, db);
+    agentRoutes(app, db);
+    agentVersionRoutes(app, db);
 
     // Concurrent run limiter — only for run creation
     app.addHook('preHandler', async (request) => {
