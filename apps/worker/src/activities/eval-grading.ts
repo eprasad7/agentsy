@@ -76,6 +76,7 @@ export interface RunAgentForEvalCaseInput {
 export interface RunAgentForEvalCaseOutput {
   runId: string;
   output: string;
+  error?: string;
   toolCalls: Array<{ name: string; arguments?: Record<string, unknown> }>;
   steps: Array<{ type: string; toolName?: string; output?: string }>;
   costUsd: number;
@@ -144,6 +145,8 @@ export async function runAgentForEvalCase(
         input: input.caseInput,
         environment: 'development',
         environmentId: input.environmentId,
+        evalSessionHistory: input.sessionHistory,
+        evalMockedTools: input.mockedToolResults,
       }],
     });
 
@@ -191,6 +194,7 @@ export async function runAgentForEvalCase(
   return {
     runId,
     output: outputText,
+    error: runRow?.status === 'failed' ? (runRow.error ?? 'Run failed') : undefined,
     toolCalls,
     steps,
     costUsd: runRow?.totalCostUsd ?? 0,

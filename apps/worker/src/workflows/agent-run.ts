@@ -32,6 +32,10 @@ export interface AgentRunInput {
   sessionId?: string;
   environment: 'development' | 'staging' | 'production';
   environmentId: string;
+  /** Eval-only: pre-seeded conversation history from the dataset case */
+  evalSessionHistory?: Array<{ role: string; content: string }>;
+  /** Eval-only: mocked tool results from the dataset case */
+  evalMockedTools?: Array<{ toolName: string; argumentsMatch?: Record<string, unknown>; result: unknown }>;
 }
 
 // ── Main Workflow ───────────────────────────────────────────────────
@@ -72,7 +76,14 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
   // 4. Build messages (load session history if applicable)
   const messages: Array<{ role: 'user' | 'assistant' | 'tool'; content: string; toolCallId?: string }> = [];
 
-  // Load session history for multi-turn
+  // Eval mode: prepend session history from dataset case (before DB history)
+  if (input.evalSessionHistory?.length) {
+    for (const msg of input.evalSessionHistory) {
+      messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content });
+    }
+  }
+
+  // Load session history for multi-turn (from DB)
   const sessionMaxMessages = (config.guardrailsConfig as Record<string, unknown>)?.['sessionMaxMessages'] as number | undefined ?? 20;
   if (input.sessionId) {
     const history = await activities.loadSessionHistory(input.sessionId, sessionMaxMessages);
@@ -326,10 +337,11 @@ export async function AgentRunWorkflow(input: AgentRunInput): Promise<void> {
         }
       }
 
-      // Execute tool
+      // Execute tool (with eval mock support)
       const toolStart = Date.now();
       const toolResult = await activities.executeNativeTool({
         toolName: toolCall.toolName, args: toolCall.args, timeout: toolDef?.timeout,
+        evalMockedTools: input.evalMockedTools,
       });
 
       // Emit step.tool_result with the same step ID
