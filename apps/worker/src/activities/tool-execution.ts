@@ -6,6 +6,8 @@ export interface ToolExecInput {
   timeout?: number;
   /** Eval-only: mocked tool results from the dataset case */
   evalMockedTools?: Array<{ toolName: string; argumentsMatch?: Record<string, unknown>; result: unknown }>;
+  /** Eval tool mode: "mock" (default) | "dry-run" | "live" */
+  toolMode?: 'mock' | 'dry-run' | 'live';
 }
 
 export interface ToolExecResult {
@@ -25,11 +27,12 @@ export interface ToolExecResult {
 export async function executeNativeTool(input: ToolExecInput): Promise<ToolExecResult> {
   const startTime = Date.now();
 
-  // Check for eval mocked results first
-  if (input.evalMockedTools?.length) {
+  const toolMode = input.toolMode ?? 'mock';
+
+  // ── Mock mode: return mocked results from dataset case ──
+  if (toolMode === 'mock' && input.evalMockedTools?.length) {
     const mock = input.evalMockedTools.find((m) => {
       if (m.toolName !== input.toolName) return false;
-      // If argumentsMatch is specified, check that all expected keys match
       if (m.argumentsMatch) {
         for (const [key, value] of Object.entries(m.argumentsMatch)) {
           if (JSON.stringify(input.args[key]) !== JSON.stringify(value)) return false;
@@ -43,7 +46,7 @@ export async function executeNativeTool(input: ToolExecInput): Promise<ToolExecR
       return { output, truncated: false, durationMs: Date.now() - startTime };
     }
 
-    // No mock found — return error (in mock mode, all tools should be mocked)
+    // No mock found in mock mode — error
     return {
       output: '',
       truncated: false,
@@ -51,6 +54,19 @@ export async function executeNativeTool(input: ToolExecInput): Promise<ToolExecR
       error: `No mock configured for tool "${input.toolName}" with args ${JSON.stringify(input.args)}`,
     };
   }
+
+  // ── Dry-run mode: return a synthetic "dry-run" result without real execution ──
+  if (toolMode === 'dry-run') {
+    const output = JSON.stringify({
+      tool: input.toolName,
+      args: input.args,
+      dry_run: true,
+      message: `Tool "${input.toolName}" would execute with the given arguments (dry-run mode, no side effects)`,
+    });
+    return { output, truncated: false, durationMs: Date.now() - startTime };
+  }
+
+  // ── Live mode or non-eval (normal execution): fall through to real execution ──
 
   try {
     // Platform mode: tool execution is delegated to a sandboxed runtime.

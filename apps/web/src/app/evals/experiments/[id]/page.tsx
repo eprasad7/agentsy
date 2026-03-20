@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { EvalComparison } from "@/components/eval-comparison";
+import { EvalComparison, type ComparisonData } from "@/components/eval-comparison";
 import { ScoreBadge } from "@/components/score-badge";
 import {
   apiClient,
@@ -279,7 +279,7 @@ export default function ExperimentDetailPage() {
 
 function CompareSection({ experimentId }: { experimentId: string }) {
   const [compareId, setCompareId] = useState("");
-  const [comparisonData, setComparisonData] = useState<Record<string, unknown> | null>(null);
+  const [comparisonData, setComparisonData] = useState<ComparisonData | null>(null);
   const [compareLoading, setCompareLoading] = useState(false);
   const [compareError, setCompareError] = useState<string | null>(null);
 
@@ -289,7 +289,7 @@ function CompareSection({ experimentId }: { experimentId: string }) {
     setCompareError(null);
     try {
       const data = await apiClient.evalExperiments.compare(experimentId, compareId.trim());
-      setComparisonData(data as Record<string, unknown>);
+      setComparisonData(data as unknown as ComparisonData);
     } catch (e: unknown) {
       setCompareError(e instanceof ApiClientError ? e.message : "Comparison failed");
     } finally {
@@ -324,7 +324,7 @@ function CompareSection({ experimentId }: { experimentId: string }) {
         )}
         {comparisonData && (
           <div className="mt-4">
-            <EvalComparison data={comparisonData as unknown as Parameters<typeof EvalComparison>[0]["data"]} />
+            <EvalComparison data={comparisonData} />
           </div>
         )}
       </div>

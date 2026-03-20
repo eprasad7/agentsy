@@ -71,7 +71,26 @@ export async function EvalExperimentWorkflow(input: EvalExperimentInput): Promis
               toolMode: config.toolMode ?? 'mock',
             });
 
-            // Grade the result
+            // If the run failed, record it as a case error — don't grade
+            if (runResult.error) {
+              const caseDurationMs = Date.now() - caseStartTime;
+              await evalActivities.persistEvalResult({
+                experimentId,
+                caseId: caseData.id,
+                orgId,
+                runId: runResult.runId,
+                output: runResult.output,
+                scores: {},
+                passed: false,
+                durationMs: caseDurationMs,
+                costUsd: runResult.costUsd,
+                error: runResult.error,
+              });
+
+              return { passed: false, costUsd: runResult.costUsd, scores: {} };
+            }
+
+            // Grade the result (only if run succeeded)
             const gradeResult = await evalActivities.gradeEvalCase({
               input: caseData.input,
               output: runResult.output,

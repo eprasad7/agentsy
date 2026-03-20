@@ -27,7 +27,8 @@ export type TestDb = ReturnType<typeof createTestDb>;
 export async function seedTestOrg(db: TestDb, slugSuffix?: string) {
   const orgId = newId('org');
   const userId = `user_${randomBytes(8).toString('hex')}`;
-  const slug = `test-org-${slugSuffix ?? randomBytes(4).toString('hex')}`;
+  // Always append random suffix to avoid slug collisions across parallel test suites
+  const slug = `test-org-${slugSuffix ?? ''}-${randomBytes(4).toString('hex')}`;
 
   await db.insert(organizations).values({
     id: orgId,

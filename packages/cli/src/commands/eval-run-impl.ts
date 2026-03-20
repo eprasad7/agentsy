@@ -255,13 +255,51 @@ async function runRemoteExperiment(
     'Content-Type': 'application/json',
   };
 
+  // Resolve agent slug → agent_id and latest version_id via API
+  const agentLookup = await fetch(`${baseUrl}/v1/agents?slug=${encodeURIComponent(agentSlug)}`, { headers });
+  if (!agentLookup.ok) {
+    console.error(`Failed to resolve agent "${agentSlug}": ${agentLookup.status}`);
+    process.exit(1);
+  }
+  const agentList = (await agentLookup.json()) as { data: Array<{ id: string }> };
+  if (!agentList.data?.[0]) {
+    console.error(`Agent "${agentSlug}" not found on platform.`);
+    process.exit(1);
+  }
+  const resolvedAgentId = agentList.data[0].id;
+
+  // Resolve version — get latest
+  const versionLookup = await fetch(`${baseUrl}/v1/agents/${resolvedAgentId}/versions?limit=1`, { headers });
+  const versionList = versionLookup.ok
+    ? ((await versionLookup.json()) as { data: Array<{ id: string }> })
+    : { data: [] };
+  const resolvedVersionId = versionList.data?.[0]?.id;
+  if (!resolvedVersionId) {
+    console.error(`No versions found for agent "${agentSlug}". Deploy first.`);
+    process.exit(1);
+  }
+
+  // Resolve dataset name → dataset_id
+  const datasetName = typeof experiment.dataset === 'string' ? experiment.dataset : experiment.dataset.name;
+  const datasetLookup = await fetch(`${baseUrl}/v1/eval/datasets?name=${encodeURIComponent(datasetName)}`, { headers });
+  if (!datasetLookup.ok) {
+    console.error(`Failed to resolve dataset "${datasetName}": ${datasetLookup.status}`);
+    process.exit(1);
+  }
+  const datasetList = (await datasetLookup.json()) as { data: Array<{ id: string }> };
+  if (!datasetList.data?.[0]) {
+    console.error(`Dataset "${datasetName}" not found on platform. Upload it first.`);
+    process.exit(1);
+  }
+  const resolvedDatasetId = datasetList.data[0].id;
+
   const createRes = await fetch(`${baseUrl}/v1/eval/experiments`, {
     method: 'POST',
     headers,
     body: JSON.stringify({
-      agent_id: agentSlug,
-      version_id: 'latest',
-      dataset_id: typeof experiment.dataset === 'string' ? experiment.dataset : experiment.dataset.name,
+      agent_id: resolvedAgentId,
+      version_id: resolvedVersionId,
+      dataset_id: resolvedDatasetId,
       graders: experiment.graders.map((g) => ({ name: g.name, type: g.type, config: g.config })),
       tool_mode: experiment.toolMode ?? 'mock',
       parallelism: experiment.parallelism ?? 5,

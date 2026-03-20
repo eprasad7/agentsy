@@ -18,17 +18,19 @@ interface CaseComparison {
   delta: number;
 }
 
-interface ComparisonData {
+export interface ComparisonData {
   experiment_a: ExperimentSummary;
   experiment_b: ExperimentSummary;
-  score_deltas: Record<string, number>;
-  regressions: CaseComparison[];
-  improvements: CaseComparison[];
+  // API returns summary_deltas, improved, regressed, per_case_diffs
+  summary_deltas: Record<string, number>;
+  regressed: CaseComparison[];
+  improved: CaseComparison[];
   unchanged: number;
+  per_case_diffs?: CaseComparison[];
 }
 
 export function EvalComparison({ data }: { data: ComparisonData }) {
-  const { experiment_a: a, experiment_b: b, score_deltas, regressions, improvements, unchanged } = data;
+  const { experiment_a: a, experiment_b: b, summary_deltas: score_deltas, regressed: regressions, improved: improvements, unchanged } = data;
   const graderNames = Object.keys(score_deltas);
 
   return (
