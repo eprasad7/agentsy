@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { apiClient, type Organization, ApiClientError } from "@/lib/api";
 import { Save } from "lucide-react";
+import { useEffect, useState } from "react";
+
+import { apiClient, type Organization, ApiClientError } from "@/lib/api";
 
 export default function SettingsGeneralPage() {
   const [org, setOrg] = useState<Organization | null>(null);

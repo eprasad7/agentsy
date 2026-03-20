@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Lock, Plus, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+
 import { apiClient, type Secret, ApiClientError } from "@/lib/api";
-import { Plus, Trash2, Lock, X } from "lucide-react";
 
 function CreateSecretModal({
   onClose,

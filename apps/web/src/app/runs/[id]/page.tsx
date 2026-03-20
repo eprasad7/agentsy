@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { ArrowLeft, Bot, Clock, Cpu, DollarSign, Hash } from "lucide-react";
 import Link from "next/link";
-import { apiClient, type Run, type RunStep, ApiClientError } from "@/lib/api";
+import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
+
 import { TraceViewer } from "@/components/trace-viewer";
-import { ArrowLeft, Bot, Clock, DollarSign, Cpu, Hash } from "lucide-react";
+import { apiClient, type Run, type RunStep, ApiClientError } from "@/lib/api";
 
 function StatusBadge({ status }: { status: string }) {
   const base = "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium";

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Filter, Play } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { apiClient, type Run, type Agent, ApiClientError } from "@/lib/api";
-import { Play, Filter } from "lucide-react";
+import { Suspense, useCallback, useEffect, useState } from "react";
+
+import { apiClient, type Agent, type Run, ApiClientError } from "@/lib/api";
 
 const STATUS_OPTIONS = [
   { value: "", label: "All statuses" },
@@ -64,6 +65,14 @@ function truncateInput(input: unknown): string {
 }
 
 export default function RunsPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center py-12"><p className="text-sm text-text-secondary">Loading...</p></div>}>
+      <RunsContent />
+    </Suspense>
+  );
+}
+
+function RunsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [runs, setRuns] = useState<Run[]>([]);

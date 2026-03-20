@@ -1,8 +1,9 @@
 "use client";
 
+import { ChevronDown, ChevronRight, Globe, Save } from "lucide-react";
 import { useEffect, useState } from "react";
+
 import { apiClient, type Environment, ApiClientError } from "@/lib/api";
-import { ChevronDown, ChevronRight, Save, Globe } from "lucide-react";
 
 function EnvironmentCard({
   env,

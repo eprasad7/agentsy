@@ -1,7 +1,8 @@
 "use client";
 
-import type { RunStep } from "@/lib/api";
 import { TraceStep } from "./trace-step";
+
+import type { RunStep } from "@/lib/api";
 
 function formatDuration(ms: number | null): string {
   if (ms === null) return "-";

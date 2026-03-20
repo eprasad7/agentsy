@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { apiClient, ApiClientError } from "@/lib/api";
 import { ArrowLeft, Save } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+
+import { apiClient, ApiClientError } from "@/lib/api";
 
 function slugify(name: string): string {
   return name

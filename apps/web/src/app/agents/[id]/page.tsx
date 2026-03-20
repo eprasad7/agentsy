@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Bot, Clock, FileText, Hash } from "lucide-react";
 import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
+
 import { apiClient, type Agent, type AgentVersion, ApiClientError } from "@/lib/api";
-import { Bot, Clock, Hash, FileText } from "lucide-react";
 
 export default function AgentOverviewPage() {
   const params = useParams<{ id: string }>();

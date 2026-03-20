@@ -1,19 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import {
+  BarChart3,
+  Bot,
+  FlaskConical,
+  LayoutDashboard,
+  LogOut,
+  Menu,
+  Play,
+  Settings,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  Bot,
-  Play,
-  FlaskConical,
-  Settings,
-  BarChart3,
-  Menu,
-  X,
-  LogOut,
-} from "lucide-react";
+import { useState } from "react";
+
 import { ThemeToggle } from "./ThemeToggle";
 
 interface NavItem {

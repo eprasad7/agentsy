@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { AlertTriangle, Check, Copy, Key, Plus, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+
 import { apiClient, type ApiKey, ApiClientError } from "@/lib/api";
-import { Plus, Copy, Trash2, Key, AlertTriangle, Check, X } from "lucide-react";
 
 function CreateKeyModal({
   onClose,

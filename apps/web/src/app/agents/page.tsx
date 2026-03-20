@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Bot, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+
 import { apiClient, type Agent, ApiClientError } from "@/lib/api";
-import { Plus, Bot } from "lucide-react";
 
 export default function AgentsPage() {
   const router = useRouter();

@@ -1,17 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import type { RunStep } from "@/lib/api";
 import {
+  AlertCircle,
+  Brain,
   ChevronDown,
   ChevronRight,
-  Brain,
-  Wrench,
-  ShieldCheck,
-  ShieldAlert,
-  AlertCircle,
   Clock,
+  ShieldAlert,
+  ShieldCheck,
+  Wrench,
 } from "lucide-react";
+import { useState } from "react";
+
+import type { RunStep } from "@/lib/api";
 
 function formatDuration(ms: number | null): string {
   if (ms === null) return "-";
@@ -152,7 +153,7 @@ export function TraceStep({ step, isLast }: { step: RunStep; isLast: boolean }) 
                     Tokens: {step.tokens_in.toLocaleString()} in / {step.tokens_out.toLocaleString()} out
                   </p>
                 )}
-                {step.output && (
+                {step.output != null && (
                   <div className="space-y-1">
                     <p className="text-xs font-medium text-text-tertiary uppercase tracking-wider">Response</p>
                     <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-lg bg-surface-hover p-3 font-mono text-xs text-text-secondary leading-relaxed">
@@ -171,7 +172,7 @@ export function TraceStep({ step, isLast }: { step: RunStep; isLast: boolean }) 
                     {step.tool_name}
                   </span>
                 )}
-                {step.input && (
+                {step.input != null && (
                   <div className="space-y-1">
                     <p className="text-xs font-medium text-text-tertiary uppercase tracking-wider">Input</p>
                     <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg bg-surface-hover p-3 font-mono text-xs text-text-secondary leading-relaxed">
@@ -179,7 +180,7 @@ export function TraceStep({ step, isLast }: { step: RunStep; isLast: boolean }) 
                     </pre>
                   </div>
                 )}
-                {step.output && (
+                {step.output != null && (
                   <div className="space-y-1">
                     <p className="text-xs font-medium text-text-tertiary uppercase tracking-wider">Output</p>
                     <pre className="max-h-32 overflow-y-auto whitespace-pre-wrap rounded-lg bg-surface-hover p-3 font-mono text-xs text-text-secondary leading-relaxed">

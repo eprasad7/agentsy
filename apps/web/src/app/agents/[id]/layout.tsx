@@ -1,8 +1,8 @@
 "use client";
 
+import { ArrowLeft, Database, FlaskConical, Info, Play, Plug, Rocket, Settings } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useParams } from "next/navigation";
-import { ArrowLeft, Info, Settings, Play, FlaskConical, Database, Plug, Rocket } from "lucide-react";
+import { useParams, usePathname } from "next/navigation";
 
 interface Tab {
   label: string;

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { RotateCcw, Save } from "lucide-react";
 import { useParams } from "next/navigation";
+import { useEffect, useState } from "react";
+
 import { apiClient, type AgentVersion, ApiClientError } from "@/lib/api";
-import { Save, RotateCcw } from "lucide-react";
 
 const CAPABILITY_CLASSES = ["fast", "balanced", "reasoning"] as const;
 const PROVIDERS = ["anthropic", "openai"] as const;

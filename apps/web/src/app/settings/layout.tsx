@@ -1,8 +1,8 @@
 "use client";
 
+import { Building2, Globe, Key, Lock, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, Key, Lock, Users, Globe } from "lucide-react";
 
 const tabs = [
   { label: "General", href: "/settings", icon: Building2 },

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { apiClient, type Member, ApiClientError } from "@/lib/api";
 import { Plus, Trash2, Users, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+
+import { apiClient, type Member, ApiClientError } from "@/lib/api";
 
 function InviteModal({
   onClose,
