@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { registerAuthMiddleware } from '../middleware/auth.js';
 import { registerErrorHandler } from '../plugins/error-handler.js';
 
-import { cleanTestData, createTestDb, seedTestOrg, type TestDb } from './helpers.js';
+import { cleanOrgData, createTestDb, seedTestOrg, type TestDb } from './helpers.js';
 
 describe('Auth Middleware (integration)', () => {
   let db: TestDb;
@@ -17,12 +17,11 @@ describe('Auth Middleware (integration)', () => {
 
   beforeAll(async () => {
     db = createTestDb();
-    await cleanTestData(db);
     orgData = await seedTestOrg(db, 'auth');
   });
 
   afterAll(async () => {
-    await cleanTestData(db);
+    await cleanOrgData(db, orgData.orgId);
   });
 
   async function buildApp() {

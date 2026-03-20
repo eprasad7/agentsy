@@ -9,7 +9,7 @@ import {
   tenantSecrets,
 } from '@agentsy/db';
 import { newId } from '@agentsy/shared';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 
@@ -69,18 +69,12 @@ export async function seedTestOrg(db: TestDb, slugSuffix?: string) {
   return { orgId, userId, slug, rawKey, keyId, envIds };
 }
 
-/** Clean up all test data. */
-export async function cleanTestData(db: TestDb) {
-  // Delete in reverse dependency order
-  await db.delete(tenantSecrets);
-  await db.delete(apiKeys);
-  await db.delete(environments);
-  await db.delete(organizationMembers);
-  await db.delete(agents);
-  await db.delete(organizations);
-}
-
-/** Execute raw SQL (for RLS testing). */
-export async function rawSql(db: TestDb, query: string) {
-  return db.execute(sql.raw(query));
+/** Clean up data for a specific org only. */
+export async function cleanOrgData(db: TestDb, orgId: string) {
+  await db.delete(tenantSecrets).where(eq(tenantSecrets.orgId, orgId));
+  await db.delete(apiKeys).where(eq(apiKeys.orgId, orgId));
+  await db.delete(environments).where(eq(environments.orgId, orgId));
+  await db.delete(organizationMembers).where(eq(organizationMembers.orgId, orgId));
+  await db.delete(agents).where(eq(agents.orgId, orgId));
+  await db.delete(organizations).where(eq(organizations.id, orgId));
 }

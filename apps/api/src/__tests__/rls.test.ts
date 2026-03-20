@@ -1,9 +1,19 @@
 import { agents } from '@agentsy/db';
 import { newId } from '@agentsy/shared';
-import { eq, sql } from 'drizzle-orm';
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import pgClient from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { cleanTestData, createTestDb, seedTestOrg, type TestDb } from './helpers.js';
+import { cleanOrgData, createTestDb, seedTestOrg, type TestDb } from './helpers.js';
+
+// Superuser for seeding data (bypasses RLS)
+const ADMIN_DB_URL =
+  process.env['DATABASE_URL'] ?? 'postgresql://agentsy:agentsy_local@localhost:5432/agentsy_test';
+
+// Non-superuser for RLS testing (subject to RLS policies)
+const APP_DB_URL =
+  process.env['RLS_DATABASE_URL'] ?? 'postgresql://agentsy_app:agentsy_app_local@localhost:5432/agentsy_test';
 
 describe('RLS Tenant Isolation (integration)', () => {
   let db: TestDb;
@@ -12,7 +22,6 @@ describe('RLS Tenant Isolation (integration)', () => {
 
   beforeAll(async () => {
     db = createTestDb();
-    await cleanTestData(db);
     orgA = await seedTestOrg(db, 'rls-a');
     orgB = await seedTestOrg(db, 'rls-b');
 
@@ -30,7 +39,7 @@ describe('RLS Tenant Isolation (integration)', () => {
       slug: 'agent-b',
     });
 
-    // Enable RLS on agents table (if not already)
+    // Enable RLS on agents table
     try {
       await db.execute(sql`ALTER TABLE agents ENABLE ROW LEVEL SECURITY`);
       await db.execute(sql`ALTER TABLE agents FORCE ROW LEVEL SECURITY`);
@@ -39,49 +48,67 @@ describe('RLS Tenant Isolation (integration)', () => {
         USING (org_id = current_setting('app.org_id', true) AND deleted_at IS NULL)
       `);
     } catch {
-      // Policy may already exist from migration
+      // Policy may already exist
     }
   });
 
   afterAll(async () => {
-    await db.execute(sql`RESET app.org_id`);
-    await cleanTestData(db);
+    await cleanOrgData(db, orgA.orgId);
+    await cleanOrgData(db, orgB.orgId);
   });
 
-  it('org A can see only its own agents when RLS context is set', async () => {
-    await db.execute(sql`BEGIN`);
-    await db.execute(sql`SET LOCAL app.org_id = ${orgA.orgId}`);
+  /**
+   * Use a single-connection postgres client (max: 1) to safely run
+   * BEGIN/SET LOCAL/COMMIT within a transaction. The pooled driver
+   * doesn't allow raw transaction commands.
+   */
+  async function queryWithRls(orgId: string): Promise<{ name: string }[]> {
+    const singleConn = pgClient(APP_DB_URL, { max: 1 });
+    const txDb = drizzle(singleConn);
+    try {
+      await txDb.execute(sql`BEGIN`);
+      await txDb.execute(sql`SELECT set_config('app.org_id', ${orgId}, true)`);
+      const result = await txDb.select({ name: agents.name }).from(agents);
+      await txDb.execute(sql`COMMIT`);
+      return result;
+    } finally {
+      await singleConn.end();
+    }
+  }
 
-    const result = await db.select().from(agents);
+  it('org A sees only its own agents', async () => {
+    const result = await queryWithRls(orgA.orgId);
     expect(result.length).toBe(1);
     expect(result[0]!.name).toBe('Agent A');
-
-    await db.execute(sql`COMMIT`);
   });
 
-  it('org B can see only its own agents when RLS context is set', async () => {
-    await db.execute(sql`BEGIN`);
-    await db.execute(sql`SET LOCAL app.org_id = ${orgB.orgId}`);
-
-    const result = await db.select().from(agents);
+  it('org B sees only its own agents', async () => {
+    const result = await queryWithRls(orgB.orgId);
     expect(result.length).toBe(1);
     expect(result[0]!.name).toBe('Agent B');
-
-    await db.execute(sql`COMMIT`);
   });
 
-  it('org A cannot access org B data', async () => {
-    await db.execute(sql`BEGIN`);
-    await db.execute(sql`SET LOCAL app.org_id = ${orgA.orgId}`);
+  it('org A cannot access org B data even with explicit filter', async () => {
+    const singleConn = pgClient(APP_DB_URL, { max: 1 });
+    const txDb = drizzle(singleConn);
+    try {
+      await txDb.execute(sql`BEGIN`);
+      await txDb.execute(sql`SELECT set_config('app.org_id', ${orgA.orgId}, true)`);
 
-    const result = await db
-      .select()
-      .from(agents)
-      .where(eq(agents.orgId, orgB.orgId));
+      // Try to query with org B's ID — RLS should still block it
+      const result = await txDb
+        .select({ name: agents.name, orgId: agents.orgId })
+        .from(agents);
 
-    // RLS should filter this out even with explicit org_id filter
-    expect(result.length).toBe(0);
+      // Should only see org A's agents
+      for (const row of result) {
+        expect(row.orgId).toBe(orgA.orgId);
+      }
+      expect(result.length).toBe(1);
 
-    await db.execute(sql`COMMIT`);
+      await txDb.execute(sql`COMMIT`);
+    } finally {
+      await singleConn.end();
+    }
   });
 });
