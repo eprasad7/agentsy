@@ -4622,3 +4622,156 @@ interface RefreshResponse {
   expires_at: string;
 }
 ```
+
+---
+
+## 18. Logs Streaming
+
+Stream run logs for monitoring and debugging via SSE. Backs the `agentsy logs --tail` CLI command.
+
+### 18.1 Stream Logs
+
+```
+GET /v1/logs?agent_id=ag_...&env=production&status=failed&tail=true
+```
+
+**Query parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `agent_id` | string | — | Filter by agent ID |
+| `env` | string | — | Filter by environment (development, staging, production) |
+| `status` | string | — | Filter by run status (completed, failed, running) |
+| `tail` | boolean | false | If true, keep connection open and stream new events as they occur |
+| `since` | string | 1h ago | ISO 8601 timestamp. Only return logs after this time. |
+| `limit` | number | 100 | Max number of historical log entries before switching to live tail |
+
+**Response: `200 OK` (SSE stream when `tail=true`, JSON array otherwise)**
+
+Each SSE event is a run log entry:
+
+```typescript
+interface LogEntry {
+  timestamp: string;       // ISO 8601
+  run_id: string;
+  agent_id: string;
+  agent_name: string;
+  environment: string;
+  status: string;          // "started" | "step" | "completed" | "failed"
+  step_type?: string;      // "llm_call" | "tool_call" | "retrieval" | "approval"
+  message: string;         // Human-readable log line
+  tokens_in?: number;
+  tokens_out?: number;
+  cost_usd?: number;
+  duration_ms?: number;
+  error?: string;
+}
+```
+
+---
+
+## 19. Alert Rules
+
+Alert rules monitor agent metrics and trigger notifications when thresholds are exceeded.
+
+### 19.1 Create Alert Rule
+
+```
+POST /v1/alerts
+```
+
+**Request body:**
+
+```typescript
+interface CreateAlertRuleRequest {
+  name: string;
+  agent_id?: string;           // Optional. Null = org-wide alert.
+  condition_type: "error_rate" | "latency_p95" | "cost_per_run" | "run_failure_count";
+  threshold: number;
+  comparison_op?: "gt" | "gte" | "lt" | "lte"; // Default: "gt"
+  window_minutes?: number;     // Default: 5
+  cooldown_minutes?: number;   // Default: 60
+  notification_channels: Array<{
+    type: "in_app" | "email" | "webhook";
+    target?: string;           // Email address or webhook URL
+  }>;
+}
+```
+
+**Response: `201 Created`**
+
+```typescript
+interface AlertRule {
+  id: string;             // alr_...
+  name: string;
+  agent_id?: string;
+  condition_type: string;
+  threshold: number;
+  comparison_op: string;
+  window_minutes: number;
+  cooldown_minutes: number;
+  notification_channels: Array<{ type: string; target?: string }>;
+  enabled: boolean;
+  last_triggered_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+```
+
+### 19.2 List Alert Rules
+
+```
+GET /v1/alerts
+```
+
+### 19.3 Update Alert Rule
+
+```
+PATCH /v1/alerts/:alert_id
+```
+
+### 19.4 Delete Alert Rule
+
+```
+DELETE /v1/alerts/:alert_id
+```
+
+---
+
+## 20. Notifications
+
+In-app notifications for alert triggers, approval requests, and other events.
+
+### 20.1 List Notifications
+
+```
+GET /v1/notifications?unread=true&limit=20
+```
+
+**Response: `200 OK`** — `PaginatedResponse<Notification>`
+
+```typescript
+interface Notification {
+  id: string;             // ntf_...
+  type: string;           // "alert_triggered" | "approval_requested" | "deploy_completed" | "eval_completed"
+  title: string;
+  body?: string;
+  resource_type?: string; // "run" | "deployment" | "experiment"
+  resource_id?: string;
+  channel: string;
+  read_at?: string;
+  created_at: string;
+}
+```
+
+### 20.2 Mark Notification as Read
+
+```
+POST /v1/notifications/:notification_id/read
+```
+
+### 20.3 Mark All Notifications as Read
+
+```
+POST /v1/notifications/read-all
+```

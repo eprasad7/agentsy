@@ -139,8 +139,8 @@ Files to create:
 
 #### 0.5 Set up `@agentsy/db` with Drizzle schema and enum types
 
-**What**: Implement the full Postgres schema using Drizzle ORM, including all enum types and all 23 tables (21 core + 2 connector tables).
-**Spec reference**: spec-data-model.md sections 2 and 3 (all tables 3.1 through 3.21).
+**What**: Implement the full Postgres schema using Drizzle ORM, including all enum types and all 25 tables (21 core + 2 connector + 2 alerting/notification tables).
+**Spec reference**: spec-data-model.md sections 2 and 3 (all tables 3.1 through 3.25).
 **Journey**: Foundation for all data operations.
 **Acceptance criteria**: `drizzle-kit generate` produces SQL migration files. Schema compiles with correct TypeScript types.
 
@@ -169,6 +169,8 @@ Files to create:
 - `packages/db/src/schema/usage-daily.ts` -- Table 3.21 `usage_daily`
 - `packages/db/src/schema/connectors.ts` -- Table 3.22 `connectors` (platform-managed catalog)
 - `packages/db/src/schema/connector-connections.ts` -- Table 3.23 `connector_connections` (per-agent active connections with encrypted OAuth tokens)
+- `packages/db/src/schema/alert-rules.ts` -- Table 3.24 `alert_rules` (per Amendment A9)
+- `packages/db/src/schema/notifications.ts` -- Table 3.25 `notifications` (per Amendment A9)
 - `packages/db/src/schema/index.ts` -- Barrel export of all tables
 - `packages/db/src/index.ts` -- DB client factory (Postgres for prod, SQLite for dev)
 - `packages/db/drizzle.config.ts` -- Drizzle Kit configuration
@@ -1779,6 +1781,253 @@ The seed script (`packages/db/src/seed.ts`) should be expanded as tables are add
 
 ---
 
+## Gap Amendments (PRD Review)
+
+The following amendments address gaps identified during a comprehensive review of the implementation plan against the PRD, architecture spec, user journeys, data model, API spec, and SDK spec. Each amendment is tagged with the phase it applies to and the gap severity.
+
+---
+
+### Amendment A1: Reconcile Clerk references with Better Auth (Phase 0.5) — MAJOR
+
+**Gap**: The data model spec used `clerk_org_id` and `clerk_user_id` column names, but the platform uses Better Auth (not Clerk).
+
+**Resolution**: The data model spec has been updated:
+- `organizations.clerk_org_id` → `organizations.external_auth_id` (Better Auth org ID)
+- `organization_members.clerk_user_id` → `organization_members.user_id` (Better Auth user ID)
+- All `// clerk_user_id` comments → `// user_id (Better Auth)`
+- ER diagram updated accordingly
+
+**Action in Phase 0.5**: When implementing the Drizzle schema, use the updated column names from spec-data-model.md. The `external_auth_id` column stores the Better Auth organization identifier; `user_id` columns store Better Auth user identifiers.
+
+---
+
+### Amendment A2: Cost circuit breaker implementation detail (Phase 2.7) — MAJOR
+
+**Gap**: `maxCostUsd` guardrail was listed but the cost estimation mechanism was unspecified.
+
+**Add to step 2.7 acceptance criteria**:
+- After each LLM call activity, compute incremental cost using a per-model pricing table in `packages/shared/src/constants.ts` (input token price + output token price per model).
+- Maintain a running `accumulatedCostUsd` counter in the workflow state. After each `LLMCall` or `ToolExecution` activity completes, compare `accumulatedCostUsd` against `guardrails.maxCostUsd`.
+- If exceeded, terminate the run with status `guardrail_triggered` and metadata `{ guardrail: "maxCostUsd", limit: 1.00, actual: 1.23 }`.
+- For streaming, cost is estimated from the final token counts (not mid-stream).
+
+**File addition**:
+- `packages/shared/src/pricing.ts` — Per-model pricing table (USD per 1M input tokens, USD per 1M output tokens). Updated when new models are added to the registry.
+
+---
+
+### Amendment A3: Output validators as tracked Phase 2 deliverable (Phase 2.7b) — MAJOR
+
+**Gap**: PII detection and content policy output validators were listed in Cross-Phase Concerns but not tracked as a phase deliverable with acceptance criteria.
+
+**Add new step 2.7b: Implement output validators**
+
+**What**: Post-response validators that scan agent output for PII and content policy violations before returning to the caller.
+**Spec reference**: PRD Q9 resolution (P0 guardrails include output validators).
+**Journey**: J3 (guardrails enforced during runs).
+**Acceptance criteria**:
+- When `guardrails.outputValidators` includes `pii_detection`, the final agent response is scanned for SSN, credit card, email, and phone patterns.
+- When `guardrails.outputValidators` includes `content_policy`, the response is checked against a configurable blocked phrase list.
+- If a validator triggers, the run completes with status `guardrail_triggered` and the violation type is recorded in run metadata.
+- Validators run after the agentic loop completes but before the response is returned/streamed.
+
+**Files** (already listed in Cross-Phase Concerns, now assigned to Phase 2.7b):
+- `apps/worker/src/guardrails/output-validators.ts`
+- `apps/worker/src/guardrails/pii-patterns.ts`
+
+---
+
+### Amendment A4: MCP stdio transport in Phase 2 local dev (Phase 2.10) — MAJOR
+
+**Gap**: `agentsy dev` ships in Phase 2 but MCP stdio support is deferred to Phase 6. PRD R-2.2 says MCP stdio for local dev is Beta Core.
+
+**Resolution**: Add basic MCP stdio client to Phase 2.10 for local dev only.
+
+**Add to step 2.10 acceptance criteria**:
+- When `agentsy.config.ts` includes MCP server definitions with `transport: "stdio"`, the local dev server spawns MCP server processes and connects via stdio.
+- MCP tools discovered via stdio are available in the local playground.
+- This is a minimal implementation (spawn process, JSON-RPC over stdin/stdout). The full Streamable HTTP transport remains in Phase 6.
+
+**File addition to Phase 2.10**:
+- `packages/cli/src/dev/mcp-stdio-client.ts` — Minimal MCP stdio client for local dev (process spawn, tool discovery, tool execution via JSON-RPC).
+
+---
+
+### Amendment A5: Capability class syntax in defineAgent (Phase 2.1) — MAJOR
+
+**Gap**: The SDK spec's `ModelIdentifier` type only supported string model IDs, but the PRD and user journeys feature `{ class: "balanced", provider: "anthropic" }` syntax.
+
+**Resolution**: The SDK spec has been updated to include `ModelSpec` as a union member of `ModelIdentifier`.
+
+**Add to step 2.1 acceptance criteria**:
+- `defineAgent({ model: "claude-sonnet-4" })` works (string model ID).
+- `defineAgent({ model: { class: "balanced", provider: "anthropic" } })` works (capability class).
+- Zod validation accepts both forms.
+- Serialization converts `ModelSpec` to the same JSON shape for the API.
+
+---
+
+### Amendment A6: Client SDK approve/deny methods (Phase 6.4) — MAJOR
+
+**Gap**: The approval API endpoints exist but `@agentsy/client` didn't expose methods to call them.
+
+**Resolution**: The SDK spec has been updated to add `runs.approve()` and `runs.deny()` to `RunsResource`.
+
+**Add to step 6.4 or Phase 3.3 update**:
+- Add `client.runs.approve(runId)` method → `POST /v1/runs/:run_id/approve`
+- Add `client.runs.deny(runId, reason?)` method → `POST /v1/runs/:run_id/deny`
+- Test: stream a run, receive `step.approval_requested` event, call `client.runs.approve()`, run resumes.
+
+---
+
+### Amendment A7: Dashboard home page populated state (Phase 8.2b) — MAJOR
+
+**Gap**: Phase 1.9 creates the dashboard home with the onboarding checklist (empty state), but no phase builds the post-onboarding populated dashboard.
+
+**Add new step 8.2b: Implement dashboard home populated state**
+
+**What**: After onboarding is complete, the dashboard home shows org-level metrics, recent runs feed, and deployment activity.
+**Spec reference**: PRD section 8 (Dashboard home: Core metrics, Recent runs, Deployment activity).
+**Journey**: J13 (agent dashboard overview — org-level view).
+**Acceptance criteria**:
+- Dashboard home shows 4 org-level sparkline metric cards: total runs (7d), success rate (7d), total cost (7d), active agents.
+- "Recent Runs" feed shows the last 10 runs across all agents with status, agent name, duration, cost.
+- "Deployment Activity" feed shows the last 5 deployments with agent name, version, environment, deployer.
+- When the org has no agents yet, the onboarding checklist is shown instead.
+
+**Files**:
+- `apps/web/src/app/page.tsx` — Modify to switch between empty state (onboarding) and populated state
+- `apps/web/src/components/dashboard-metrics.tsx` — Org-level sparkline cards
+- `apps/web/src/components/recent-runs-feed.tsx` — Recent runs feed
+- `apps/web/src/components/deployment-activity-feed.tsx` — Deployment activity feed
+
+---
+
+### Amendment A8: Logs streaming API endpoint (Phase 9.2) — MAJOR
+
+**Gap**: `agentsy logs` CLI command was specified but had no backend API endpoint.
+
+**Resolution**: A `GET /v1/logs` SSE endpoint has been added to spec-api.md section 18.
+
+**Add to Phase 9.2 prerequisites**: Phase 8 must provide the usage/runs API endpoints.
+
+**Add new API route**:
+- `apps/api/src/routes/logs.ts` — `GET /v1/logs` endpoint. When `tail=true`, opens an SSE connection and streams new run events as they occur by subscribing to Redis pub/sub. When `tail=false`, returns recent log entries as JSON from the `runs` and `run_steps` tables.
+
+**Update step 9.2 acceptance criteria**:
+- `agentsy logs --agent support-agent --env production --tail` connects to `GET /v1/logs?agent_id=...&env=production&tail=true` via SSE.
+- Historical logs returned before switching to live tail.
+- Each log entry shows timestamp, agent name, run status, step type, and message.
+
+---
+
+### Amendment A9: Alerting data model (Phase 8.11) — MAJOR
+
+**Gap**: Alert rules and notifications had no data model tables or API spec.
+
+**Resolution**: Tables `alert_rules` (3.24) and `notifications` (3.25) have been added to spec-data-model.md. API endpoints added to spec-api.md sections 19 (Alert Rules) and 20 (Notifications).
+
+**Update step 8.11**:
+- Reference spec-data-model.md tables 3.24 and 3.25 for the schema.
+- Reference spec-api.md sections 19 and 20 for the API endpoints.
+- Add to Phase 0.5: include `alert_rules` and `notifications` tables in the Drizzle schema.
+
+**Add to Phase 0.5 files**:
+- `packages/db/src/schema/alert-rules.ts` — Table 3.24 `alert_rules`
+- `packages/db/src/schema/notifications.ts` — Table 3.25 `notifications`
+
+---
+
+### Amendment A10: Concurrent run enforcement (Phase 1.6) — MAJOR
+
+**Gap**: Concurrent run limiting was mentioned but the implementation mechanism was unspecified.
+
+**Add to step 1.6 acceptance criteria**:
+- Concurrent run counting uses a Redis key per org: `concurrent_runs:{org_id}`.
+- On `POST /v1/agents/:id/run`: INCR the key. If the count exceeds the org's `maxConcurrentRuns` (default 10), return `429 Too Many Requests` with `Retry-After` header and DECR the key.
+- On run completion or failure (worker callback): DECR the key.
+- Safety: Set a TTL on the key (e.g., 1 hour) to auto-recover from crashes where DECR is missed.
+- This is architecturally distinct from request-rate limiting (sliding window) and token-rate limiting (daily counter).
+
+**Add to step 1.6 files**:
+- `apps/api/src/middleware/concurrent-run-limiter.ts` — Redis INCR/DECR middleware for run endpoints
+
+---
+
+### Amendment A11: Prompt diff viewer UI component (Phase 8.4) — MINOR
+
+**Add to step 8.4 files**:
+- `apps/web/src/components/prompt-diff-viewer.tsx` — Side-by-side or inline text diff component using the `diff` npm package. Renders system prompt, model, tools, and guardrails changes between two agent versions.
+
+---
+
+### Amendment A12: Eval tool mocking modes (Phase 4.7) — MINOR
+
+**Add to step 4.7 acceptance criteria**:
+- `toolMode: "mock"` (default): Tools return mocked responses from dataset. Tools are never called.
+- `toolMode: "dry-run"`: Tools are called but results are discarded; mocked results are used for scoring.
+- `toolMode: "live"`: Tools are called and their actual results are used for scoring.
+- Tests verify all three modes.
+
+---
+
+### Amendment A13: Eval cost estimate before run (Phase 4.10) — MINOR
+
+**Add to step 4.10 acceptance criteria**:
+- Before starting an experiment, the CLI displays an estimated cost: `Estimated cost: ~$X.XX (N cases × M graders × model pricing)`.
+- If estimated cost exceeds $5, prompt for confirmation unless `--yes` flag is provided.
+- In `--ci` mode, always proceed without confirmation.
+
+---
+
+### Amendment A14: Terminal REPL approval handling (Phase 2.10) — MINOR
+
+**Add to step 2.10 acceptance criteria**:
+- When a write tool with `approvalRequired: true` is called in local dev, the terminal REPL displays the tool name, arguments, and risk level, then prompts `Approve? [y/n]`.
+- `y` resumes with tool execution. `n` skips the tool call and continues the agentic loop.
+
+---
+
+### Amendment A15: Local playground trace viewer detail (Phase 2.10) — MINOR
+
+**Add to step 2.10 acceptance criteria**:
+- Playground shows a split-pane view with chat on the left and step-by-step trace on the right.
+- Each trace step shows type (llm_call/tool_call/retrieval), duration, and token count.
+- Approval prompts appear inline in the chat pane.
+
+---
+
+### Amendment A16: Webhook event type for approvals (Phase 10.2) — MINOR
+
+**Add `approval.requested` to the supported webhook event types**:
+- When a run enters an approval gate, an `approval.requested` event is delivered to subscribed webhooks.
+- Payload includes `run_id`, `agent_id`, `tool_name`, `tool_arguments`, and `risk_level`.
+
+---
+
+### Amendment A17: Encryption key rotation (Phase 1.8) — MINOR
+
+**Add to step 1.8 or Cross-Phase Concerns**:
+- `apps/api/src/lib/encryption.ts` should support key rotation: accept both `SECRETS_MASTER_KEY` (current) and `SECRETS_MASTER_KEY_PREVIOUS` (old).
+- Decryption tries the current key first, falls back to the previous key.
+- A one-time migration script re-encrypts all secrets with the new key: `packages/db/src/scripts/rotate-master-key.ts`.
+- This is not required for beta launch but should be planned.
+
+---
+
+### Amendment A18: Idempotency key middleware (Phase 1) — MINOR
+
+**Add new step 1.6b: Implement idempotency key middleware**
+
+**What**: Store response payloads keyed by `(org_id, idempotency_key)` with 24-hour TTL in Redis. Return cached responses for duplicate mutating requests.
+**Spec reference**: spec-api.md section 1 "Idempotency".
+**Acceptance criteria**: `POST /v1/agents` with `Idempotency-Key: abc123` stores the response. A second `POST` with the same key returns the cached response without creating a duplicate.
+
+**Files**:
+- `apps/api/src/middleware/idempotency.ts` — Extract `Idempotency-Key` header, check Redis, cache response.
+
+---
+
 ## Risks & Mitigations
 
 | Risk | Phase | Mitigation |
@@ -1813,10 +2062,11 @@ The seed script (`packages/db/src/seed.ts`) should be expanded as tables are add
 - `src/events.ts` -- SSE event types (Phase 3)
 - `src/storage.ts` -- S3-compatible client wrapper (Phase 0)
 - `src/chunking.ts` -- Text splitter for documents (Phase 5)
+- `src/pricing.ts` -- Per-model pricing table for cost estimation (Phase 2)
 - `src/tracing.ts` -- OTel SDK initialization (Phase 2+)
 
 ### `packages/db/`
-- `src/schema/*.ts` -- All 23 table definitions (Phase 0)
+- `src/schema/*.ts` -- All 25 table definitions (Phase 0)
 - `src/seeds/connector-catalog.ts` -- Seed 15 starter connectors (Phase 6b)
 - `src/client.ts` -- DB client factory (Phase 0)
 - `src/seed.ts` -- Development seed script (Phase 0+)
@@ -1882,6 +2132,7 @@ The seed script (`packages/db/src/seed.ts`) should be expanded as tables are add
 - `src/dev/local-server.ts` -- Local Fastify server (Phase 2)
 - `src/dev/playground.ts` -- Local playground UI (Phase 2)
 - `src/dev/terminal-repl.ts` -- Interactive terminal chat REPL (Phase 2)
+- `src/dev/mcp-stdio-client.ts` -- Minimal MCP stdio client for local dev (Phase 2)
 - `src/templates/` -- Project templates (Phase 2, 9)
 - `src/auth/token-store.ts` -- CLI credential storage (Phase 7)
 - `src/formatters/eval-report.ts` -- Terminal and markdown formatters (Phase 4)
@@ -1891,7 +2142,10 @@ The seed script (`packages/db/src/seed.ts`) should be expanded as tables are add
 - `src/plugins/*.ts` -- Error handler, CORS, request logger (Phase 1)
 - `src/middleware/*.ts` -- Auth, tenant context, rate limiter (Phase 1)
 - `src/lib/redis.ts` -- Redis client (Phase 1)
-- `src/lib/encryption.ts` -- AES-256-GCM (Phase 6)
+- `src/lib/encryption.ts` -- AES-256-GCM (Phase 1)
+- `src/middleware/concurrent-run-limiter.ts` -- Concurrent run INCR/DECR (Phase 1)
+- `src/middleware/idempotency.ts` -- Idempotency key middleware (Phase 1)
+- `src/routes/logs.ts` -- Log streaming SSE endpoint (Phase 9)
 - `src/auth/*.ts` -- Better Auth config, org hooks (Phase 1)
 - `src/routes/health.ts` -- Health check (Phase 1)
 - `src/routes/agents.ts` -- Agent CRUD (Phase 2)
@@ -2010,17 +2264,17 @@ The seed script (`packages/db/src/seed.ts`) should be expanded as tables are add
 
 Before declaring the platform ready for private beta (end of Milestone 4, week 16):
 
-- [ ] Phase 0: Monorepo builds, infra deployed, CI passes
-- [ ] Phase 1: Signup, org creation, API keys, RLS, rate limiting
-- [ ] Phase 2: defineAgent + defineTool work, agent runs with tools, guardrails enforced
+- [ ] Phase 0: Monorepo builds, infra deployed, CI passes, all 25 tables in schema
+- [ ] Phase 1: Signup, org creation, API keys, RLS, rate limiting, concurrent run enforcement, idempotency
+- [ ] Phase 2: defineAgent + defineTool work (string + capability class model syntax), agent runs with tools, guardrails enforced (including output validators), MCP stdio in local dev
 - [ ] Phase 3: SSE streaming, client SDK, sessions, OpenAI compat endpoint
 - [ ] Phase 4: 10 graders, eval experiments, baselines, CLI eval commands, CI integration
 - [ ] Phase 5: Knowledge bases, document upload, embeddings, hybrid retrieval, RAG
 - [ ] Phase 6: MCP client, encrypted secrets, tool policies, approval gates
 - [ ] Phase 6b: Connector catalog with 15 managed connectors, OAuth flows, dashboard browser
 - [ ] Phase 7: Environments, deploy, rollback, version diff, CLI auth + secrets
-- [ ] Phase 8: Dashboard with agent list, trace viewer, usage charts, sparklines, alerts
-- [ ] Phase 9: CLI polished, hot reload, logs tail, CI/CD docs
+- [ ] Phase 8: Dashboard home (populated), agent list, trace viewer, usage charts, sparklines, alerts (with data model), prompt diff viewer
+- [ ] Phase 9: CLI polished, hot reload, logs tail (with backend SSE endpoint), CI/CD docs
 - [ ] Phase 10: Webhooks with signature verification and retry
 - [ ] All 16 user journeys verified end-to-end
 - [ ] Load test: 10 concurrent agent runs per org sustains without degradation

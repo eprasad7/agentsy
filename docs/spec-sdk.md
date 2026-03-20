@@ -406,6 +406,10 @@ export interface AgentConfig {
 /**
  * Model identifier string. Provider-prefixed for clarity.
  */
+/**
+ * Model can be specified as a string (direct model ID) or as a capability class object.
+ * The capability class syntax is the recommended approach per PRD section 5.10.
+ */
 export type ModelIdentifier =
   | "claude-sonnet-4"
   | "claude-haiku-3.5"
@@ -414,7 +418,21 @@ export type ModelIdentifier =
   | "gpt-4o-mini"
   | "o3"
   | "o4-mini"
-  | (string & {}); // Allow custom model strings for future providers
+  | (string & {}) // Allow custom model strings for future providers
+  | ModelSpec;
+
+/**
+ * Capability class model specification. Resolved to a concrete model ID at runtime
+ * via the model registry (architecture-v1.md section 3.4).
+ *
+ * Example: { class: "balanced", provider: "anthropic" } -> "claude-sonnet-4"
+ */
+export interface ModelSpec {
+  /** Capability class: "fast", "balanced", "powerful" */
+  class: "fast" | "balanced" | "powerful";
+  /** Provider preference. If the primary provider fails, falls back to another provider in the same class. */
+  provider?: "anthropic" | "openai";
+}
 
 /**
  * Dynamic system prompt function. Receives runtime context, returns prompt string.
@@ -1446,6 +1464,25 @@ export class RunsResource {
       onPoll?: (status: RunStatus) => void;
     }
   ): Promise<RunResponse>;
+
+  /**
+   * Approve a pending tool call for a run with an active approval gate.
+   *
+   * REST: POST /v1/runs/{runId}/approve
+   *
+   * @param runId - Run ID with a pending approval
+   */
+  async approve(runId: string, options?: RequestOptions): Promise<void>;
+
+  /**
+   * Deny a pending tool call for a run with an active approval gate.
+   *
+   * REST: POST /v1/runs/{runId}/deny
+   *
+   * @param runId - Run ID with a pending approval
+   * @param reason - Optional reason for denial
+   */
+  async deny(runId: string, reason?: string, options?: RequestOptions): Promise<void>;
 }
 ```
 

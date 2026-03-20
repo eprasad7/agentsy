@@ -249,7 +249,7 @@ export const organizations = pgTable(
     id: varchar("id", { length: 30 }).primaryKey(), // org_...
     name: varchar("name", { length: 255 }).notNull(),
     slug: varchar("slug", { length: 63 }).notNull(),
-    clerkOrgId: varchar("clerk_org_id", { length: 255 }).notNull(),
+    externalAuthId: varchar("external_auth_id", { length: 255 }).notNull(), // Better Auth org ID
     plan: orgPlanEnum("plan").notNull().default("free"),
     billingEmail: varchar("billing_email", { length: 255 }),
     metadata: jsonb("metadata").$type<OrgMetadata>().default({}),
@@ -263,7 +263,7 @@ export const organizations = pgTable(
   },
   (table) => [
     uniqueIndex("organizations_slug_idx").on(table.slug),
-    uniqueIndex("organizations_clerk_org_id_idx").on(table.clerkOrgId),
+    uniqueIndex("organizations_external_auth_id_idx").on(table.externalAuthId),
   ]
 );
 
@@ -274,6 +274,7 @@ type OrgMetadata = {
   maxTokensPerDay?: number;
   maxConcurrentRuns?: number;
   features?: string[];
+  retentionDays?: number; // Default: 90. Configurable per org.
 };
 ```
 
@@ -293,7 +294,7 @@ export const organizationMembers = pgTable(
     orgId: varchar("org_id", { length: 30 })
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
-    clerkUserId: varchar("clerk_user_id", { length: 255 }).notNull(),
+    userId: varchar("user_id", { length: 255 }).notNull(), // Better Auth user ID
     role: orgMemberRoleEnum("role").notNull().default("member"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -305,9 +306,9 @@ export const organizationMembers = pgTable(
   (table) => [
     uniqueIndex("org_members_org_user_idx").on(
       table.orgId,
-      table.clerkUserId
+      table.userId
     ),
-    index("org_members_clerk_user_id_idx").on(table.clerkUserId),
+    index("org_members_user_id_idx").on(table.userId),
   ]
 );
 ```
@@ -334,7 +335,7 @@ export const apiKeys = pgTable(
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
-    createdBy: varchar("created_by", { length: 255 }), // clerk_user_id
+    createdBy: varchar("created_by", { length: 255 }), // user_id (Better Auth)
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -429,7 +430,7 @@ export const agentVersions = pgTable(
       .default({}),
     modelParams: jsonb("model_params").$type<ModelParams>().default({}),
     description: text("description"), // changelog / commit message for this version
-    createdBy: varchar("created_by", { length: 255 }), // clerk_user_id
+    createdBy: varchar("created_by", { length: 255 }), // user_id (Better Auth)
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -551,7 +552,7 @@ export const deployments = pgTable(
       .notNull()
       .references(() => environments.id, { onDelete: "cascade" }),
     status: deploymentStatusEnum("status").notNull().default("active"),
-    deployedBy: varchar("deployed_by", { length: 255 }), // clerk_user_id
+    deployedBy: varchar("deployed_by", { length: 255 }), // user_id (Better Auth)
     deployedAt: timestamp("deployed_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -741,7 +742,7 @@ export const runSteps = pgTable(
     durationMs: integer("duration_ms"),
     error: text("error"),
     approvalStatus: varchar("approval_status", { length: 20 }), // null | "pending" | "approved" | "denied"
-    approvalResolvedBy: varchar("approval_resolved_by", { length: 255 }), // clerk_user_id
+    approvalResolvedBy: varchar("approval_resolved_by", { length: 255 }), // user_id (Better Auth)
     approvalResolvedAt: timestamp("approval_resolved_at", { withTimezone: true }),
     metadata: jsonb("metadata").$type<StepMetadata>().default({}),
     startedAt: timestamp("started_at", { withTimezone: true }),
@@ -838,7 +839,7 @@ export const evalDatasets = pgTable(
     description: text("description"),
     version: integer("version").notNull().default(1),
     caseCount: integer("case_count").notNull().default(0),
-    createdBy: varchar("created_by", { length: 255 }), // clerk_user_id
+    createdBy: varchar("created_by", { length: 255 }), // user_id (Better Auth)
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -983,7 +984,7 @@ export const evalExperiments = pgTable(
     error: text("error"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
-    createdBy: varchar("created_by", { length: 255 }), // clerk_user_id
+    createdBy: varchar("created_by", { length: 255 }), // user_id (Better Auth)
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -1103,7 +1104,7 @@ export const evalBaselines = pgTable(
       .$type<Record<string, Record<string, number>>>() // case_id -> grader_name -> score
       .notNull(),
     isActive: boolean("is_active").notNull().default(true),
-    setBy: varchar("set_by", { length: 255 }), // clerk_user_id
+    setBy: varchar("set_by", { length: 255 }), // user_id (Better Auth)
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -1483,6 +1484,91 @@ export const connectorConnections = pgTable(
 
 ---
 
+### 3.24 alert_rules
+
+```typescript
+export const alertRules = pgTable(
+  "alert_rules",
+  {
+    id: varchar("id", { length: 30 }).primaryKey(), // alr_...
+    orgId: varchar("org_id", { length: 30 })
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    agentId: varchar("agent_id", { length: 30 })
+      .references(() => agents.id, { onDelete: "cascade" }), // nullable = org-wide
+    name: varchar("name", { length: 255 }).notNull(),
+    conditionType: varchar("condition_type", { length: 50 }).notNull(), // "error_rate" | "latency_p95" | "cost_per_run" | "run_failure_count"
+    threshold: doublePrecision("threshold").notNull(),
+    windowMinutes: integer("window_minutes").notNull().default(5),
+    comparisonOp: varchar("comparison_op", { length: 10 }).notNull().default("gt"), // "gt" | "gte" | "lt" | "lte"
+    notificationChannels: jsonb("notification_channels")
+      .$type<NotificationChannel[]>()
+      .notNull()
+      .default([]),
+    enabled: boolean("enabled").notNull().default(true),
+    lastTriggeredAt: timestamp("last_triggered_at", { withTimezone: true }),
+    cooldownMinutes: integer("cooldown_minutes").notNull().default(60),
+    createdBy: varchar("created_by", { length: 255 }), // user_id (Better Auth)
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("alert_rules_org_idx").on(table.orgId),
+    index("alert_rules_agent_idx").on(table.agentId),
+  ]
+);
+
+// JSONB type contract
+type NotificationChannel = {
+  type: "in_app" | "email" | "webhook";
+  target?: string; // email address or webhook URL
+};
+```
+
+**RLS**: `org_id = current_setting('app.org_id')`.
+
+---
+
+### 3.25 notifications
+
+```typescript
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: varchar("id", { length: 30 }).primaryKey(), // ntf_...
+    orgId: varchar("org_id", { length: 30 })
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: varchar("user_id", { length: 255 }).notNull(), // Better Auth user ID
+    alertRuleId: varchar("alert_rule_id", { length: 30 })
+      .references(() => alertRules.id, { onDelete: "set null" }),
+    type: varchar("type", { length: 50 }).notNull(), // "alert_triggered" | "approval_requested" | "deploy_completed" | "eval_completed"
+    title: varchar("title", { length: 255 }).notNull(),
+    body: text("body"),
+    resourceType: varchar("resource_type", { length: 50 }), // "run" | "deployment" | "experiment"
+    resourceId: varchar("resource_id", { length: 30 }),
+    channel: varchar("channel", { length: 20 }).notNull().default("in_app"), // "in_app" | "email" | "webhook"
+    readAt: timestamp("read_at", { withTimezone: true }),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("notifications_org_user_idx").on(table.orgId, table.userId),
+    index("notifications_unread_idx").on(table.userId, table.readAt),
+  ]
+);
+```
+
+**RLS**: `org_id = current_setting('app.org_id')`.
+
+---
+
 ## 4. ER Diagram
 
 ```mermaid
@@ -1535,7 +1621,7 @@ erDiagram
         varchar id PK "org_..."
         varchar name
         varchar slug UK
-        varchar clerk_org_id UK
+        varchar external_auth_id UK
         enum plan
         varchar billing_email
         jsonb metadata
@@ -1547,7 +1633,7 @@ erDiagram
     organization_members {
         varchar id PK "mem_..."
         varchar org_id FK
-        varchar clerk_user_id
+        varchar user_id
         enum role
         timestamptz created_at
         timestamptz updated_at
