@@ -1,14 +1,14 @@
-import { zodToJsonSchema as zodToJsonSchemaLib } from 'zod-to-json-schema';
+import { z } from 'zod';
 import { CAPABILITY_CLASS_MODELS } from '@agentsy/shared';
 
 import type { AgentConfig, ModelIdentifier } from './types.js';
 
 /**
  * Convert a Zod schema to JSON Schema (for LLM tool definitions).
+ * Uses zod v4's built-in toJSONSchema.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function zodToJsonSchema(schema: any): Record<string, unknown> {
-  return zodToJsonSchemaLib(schema, { target: 'openApi3' }) as Record<string, unknown>;
+export function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
+  return z.toJSONSchema(schema) as Record<string, unknown>;
 }
 
 /**
@@ -82,6 +82,7 @@ export function serializeAgentConfig(config: Readonly<AgentConfig>): {
     maxCostUsd: g.maxCostUsd,
     timeoutMs: g.timeoutMs,
     maxToolResultSize: g.maxToolResultSize,
+    toolTimeout: g.toolTimeout,
     outputValidation: g.outputValidation?.map((v) => ({
       type: v.type,
       config: 'config' in v ? v.config : undefined,
@@ -117,6 +118,7 @@ export interface SerializedGuardrailsConfig {
   maxCostUsd?: number;
   timeoutMs?: number;
   maxToolResultSize?: number;
+  toolTimeout?: number;
   outputValidation?: Array<{
     type: string;
     config?: unknown;
