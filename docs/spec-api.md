@@ -3310,7 +3310,7 @@ curl https://api.agentsy.com/v1/organization/members \
     {
       "id": "mem_a3k9Xp2mQ7wR",
       "org_id": "org_V1StGXR8_Z5jdHi6B",
-      "clerk_user_id": "user_2abc123",
+      "user_id": "user_2abc123",
       "role": "admin",
       "email": "alice@acme.com",
       "name": "Alice Johnson",

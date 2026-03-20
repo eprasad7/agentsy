@@ -570,7 +570,7 @@ Files to create:
 **What**: The core agentic loop as a Temporal workflow. LLM call -> check for tool calls -> execute tools -> repeat -> return response.
 **Spec reference**: architecture-v1.md section 3.1 (Agent Run Lifecycle), section 2.3 (agentsy-worker workflows and activities).
 **Journey**: J3 (run agent locally and on platform).
-**Acceptance criteria**: A workflow takes an agent config + input, executes the agentic loop, and returns a response. Guardrails enforced: maxIterations (R-1.6), maxTokens (R-1.7), timeout (R-1.8), maxCostUsd (R-1.8b).
+**Acceptance criteria**: A workflow takes an agent config + input, executes the agentic loop, and returns a response. Guardrails enforced: maxIterations (R-1.6), maxTokens (R-1.7), timeout (R-1.8), maxCostUsd (R-1.8b). **Checkpointing (R-1.5)**: Temporal's built-in workflow replay mechanism provides automatic checkpointing at every activity boundary (each LLM call and tool call is a separate activity). If the worker crashes mid-run, Temporal replays the workflow from the last completed activity — no explicit checkpoint logic needed beyond structuring the agentic loop as sequential activity calls.
 
 Files to create:
 - `apps/worker/src/workflows/agent-run.ts` -- `AgentRunWorkflow` with agentic loop, guardrail checks, step recording

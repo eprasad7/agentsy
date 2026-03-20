@@ -56,8 +56,11 @@ All primary keys use **prefixed nanoid** strings. This provides:
 | knowledge_chunks | `kc_` | `kc_hT7cF3nM8jLz` |
 | secrets | `sec_` | `sec_xW6bN4kP7vRm` |
 | usage_daily | `usg_` | `usg_qJ8tY5cF2hNx` |
+| webhooks | `whk_` | `whk_mN9vB5kP2wQx` |
 | connectors | `con_` | `con_gmail` |
 | connector_connections | `conn_` | `conn_qJ8tY5cF2hNx` |
+| alert_rules | `alr_` | `alr_hT7cF3nM8jLz` |
+| notifications | `ntf_` | `ntf_xW6bN4kP7vRm` |
 
 ### Nanoid Generator
 
