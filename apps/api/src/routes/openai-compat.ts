@@ -146,7 +146,15 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
       updatedAt: now,
     });
 
-    // Start Temporal workflow
+    // Commit the scoped transaction so the run row is visible to the worker
+    if (request.scopedDb) {
+      try {
+        const { sql: sqlTag } = await import('drizzle-orm');
+        await d.execute(sqlTag`COMMIT`);
+      } catch { /* already committed */ }
+    }
+
+    // Post-commit: use shared pool for workflow start, polling, SSE
     try {
       const temporal = getTemporalClient();
       if (temporal) {
@@ -159,10 +167,10 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
             sessionId: body.agentsy?.session_id, environment: envName, environmentId: envResult[0].id,
           }],
         });
-        await d.update(runs).set({ temporalWorkflowId: workflowId }).where(eq(runs.id, runId));
+        await db.update(runs).set({ temporalWorkflowId: workflowId }).where(eq(runs.id, runId));
       }
     } catch (err) {
-      await d.update(runs).set({
+      await db.update(runs).set({
         status: 'failed', error: err instanceof Error ? err.message : 'Failed to start workflow',
         completedAt: new Date(), updatedAt: new Date(),
       }).where(eq(runs.id, runId));
@@ -236,13 +244,13 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
     const pollInterval = 500;
     const startTime = Date.now();
 
-    let result = await d.select().from(runs).where(eq(runs.id, runId)).limit(1);
+    let result = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
     while (
       result[0] && ['queued', 'running', 'awaiting_approval'].includes(result[0].status) &&
       Date.now() - startTime < maxWaitMs
     ) {
       await new Promise((r) => setTimeout(r, pollInterval));
-      result = await d.select().from(runs).where(eq(runs.id, runId)).limit(1);
+      result = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
     }
 
     if (!result[0]) throw notFound('Run not found');

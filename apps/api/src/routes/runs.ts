@@ -264,6 +264,19 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       updatedAt: now,
     });
 
+    // Commit the scoped transaction NOW so the run row is visible to the
+    // worker (which uses its own DB connection). The RLS middleware's
+    // onResponse commit will be a harmless no-op.
+    if (request.scopedDb) {
+      try {
+        const { sql: sqlTag } = await import('drizzle-orm');
+        await d.execute(sqlTag`COMMIT`);
+      } catch { /* already committed */ }
+    }
+
+    // From here, use the shared pool — the row is committed and visible
+    // to all connections (worker, sync poller, SSE subscriber).
+
     // Start Temporal workflow
     try {
       const temporal = getTemporalClient();
@@ -284,13 +297,13 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
           }],
         });
 
-        await d
+        await db
           .update(runs)
           .set({ temporalWorkflowId: workflowId })
           .where(eq(runs.id, runId));
       }
     } catch (err) {
-      await d
+      await db
         .update(runs)
         .set({
           status: 'failed',
@@ -313,19 +326,19 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       };
     }
 
-    // Stream mode: SSE via Redis pub/sub
+    // Stream mode: SSE via Redis pub/sub (long-lived, must not hold transaction)
     if (body.stream) {
       const lastEventId = request.headers['last-event-id'] as string | undefined;
       await handleSSEConnection(runId, reply, lastEventId);
       return;
     }
 
-    // Sync mode: poll until complete (with timeout)
+    // Sync mode: poll on shared pool until worker updates the row
     const maxWaitMs = 300_000;
     const pollInterval = 500;
     const startTime = Date.now();
 
-    let result = await d.select().from(runs).where(eq(runs.id, runId)).limit(1);
+    let result = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
 
     while (
       result[0] &&
@@ -333,7 +346,7 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       Date.now() - startTime < maxWaitMs
     ) {
       await new Promise((resolve) => setTimeout(resolve, pollInterval));
-      result = await d.select().from(runs).where(eq(runs.id, runId)).limit(1);
+      result = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
     }
 
     if (!result[0]) throw notFound('Run not found');
