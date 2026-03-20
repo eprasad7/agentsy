@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@agentsy/db": "workspace:*",
+    "@agentsy/eval": "workspace:*",
     "@agentsy/shared": "workspace:*",
     "@ai-sdk/anthropic": "^3.0.58",
     "@ai-sdk/openai": "^3.0.41",

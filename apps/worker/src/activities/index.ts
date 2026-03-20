@@ -8,3 +8,11 @@ export { emitRunEvent, cleanupRunEvents } from './publish-event.js';
 export { generateStepId } from './generate-id.js';
 export { loadSessionHistory } from './session-history.js';
 export { persistMessages } from './persist-messages.js';
+export {
+  loadDatasetCases,
+  runAgentForEvalCase,
+  gradeEvalCase,
+  persistEvalResult,
+  updateExperimentStatus,
+  autoCompareWithBaseline,
+} from './eval-grading.js';
