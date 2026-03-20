@@ -480,6 +480,12 @@ apps/web/src/components/
 
 ---
 
+## Related: Phase 4.5
+
+**Phase 4.5 — Agent response contract** (`docs/phase-4-5-brief.md`): declarative `text` / `json` output on `agent_versions`, optional JSON Schema, strict validation, and SDK/API stream semantics. Enables eval `json_schema` grader to default to the **deployed agent schema** without duplicating it per case.
+
+---
+
 ## What NOT To Do in Phase 4
 
 - Do not implement knowledge base / RAG (Phase 5)

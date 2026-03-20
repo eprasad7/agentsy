@@ -11,7 +11,7 @@
 
 ### Total Phases
 
-15 phases (Phase 0-12 + Phase 6b + Phase 11.5), mapping to PRD Milestones 1-4 (weeks 1-16) plus post-beta milestones. Each phase builds on the previous. A developer should complete phases sequentially; some sub-tasks within a phase can be parallelized.
+17 phases (Phase 0-12 + Phase 3.5 + Phase 4.5 + Phase 6b + Phase 11.5), mapping to PRD Milestones 1-4 (weeks 1-16) plus post-beta milestones. Each phase builds on the previous. A developer should complete phases sequentially; some sub-tasks within a phase can be parallelized.
 
 ### Phase-to-Milestone Mapping
 
@@ -23,6 +23,7 @@
 | 3 | Streaming & API | Milestone 1-2 | 3-4 days |
 | 3.5 | Design Tokens & Retroactive UI | Milestone 2 | 3-4 days |
 | 4 | Eval Engine | Milestone 3 | 5-7 days |
+| 4.5 | Agent Response Contract | Milestone 3 | 3-5 days |
 | 5 | Memory & Knowledge Base | Milestone 4 | 4-5 days |
 | 6 | Tool System & MCP | Milestone 4 | 3-4 days |
 | 6b | Connector Catalog | Milestone 4 | 5-7 days |
@@ -41,10 +42,10 @@
 | J1 | Signup & Onboarding | Phase 1 | Phase 8, 9 |
 | J2 | Create & Define an Agent | Phase 2 | Phase 9 |
 | J3 | Local Development & Testing | Phase 2, 3 | Phase 9 |
-| J4 | Write & Run Evals | Phase 4 | Phase 9 |
+| J4 | Write & Run Evals | Phase 4 | Phase 4.5, Phase 9 |
 | J5 | Deploy to Production | Phase 7 | Phase 9 |
 | J6 | Monitor & Debug in Production | Phase 8 | Phase 3 |
-| J7 | Integrate via API & SDK | Phase 3 | Phase 2 |
+| J7 | Integrate via API & SDK | Phase 3 | Phase 2, Phase 4.5 |
 | J8 | Team Collaboration | Phase 1 | Phase 8 |
 | J9 | Knowledge Base & RAG | Phase 5 | Phase 9 |
 | J10 | Connect MCP Servers | Phase 6 | Phase 2, 6b |
@@ -945,6 +946,90 @@ Files to create:
 ### Definition of Done
 
 - Demo: Create a 5-case eval dataset with expected outputs and tool mocks. Run eval against a test agent. See 4/5 pass. Change the prompt, run eval again. Compare experiments -- see one regression. Set the passing experiment as baseline. Run `agentsy eval run --ci` in GitHub Actions -- see PR comment with results.
+
+---
+
+## Phase 4.5: Agent Response Contract (Journeys 3, 4, 7)
+
+**Brief**: `docs/phase-4-5-brief.md`
+
+### Prerequisites
+- Phase 2 complete (agent runtime, `agent_versions` on deploy)
+- Phase 3 complete (runs, SSE streaming, client SDK)
+
+### Steps
+
+#### 4.5.1 Types, Zod, and specs
+
+**What**: Introduce `ResponseOutputConfig` (`mode: text | json`, optional `json_schema`, `strict`, optional `schema_version`). Document storage on `agent_versions`, run/step metadata, and SSE final payloads in `spec-sdk.md`, `spec-data-model.md`, `spec-api.md`.
+**Spec reference**: spec-data-model.md § agent_versions; spec-api.md agent run + stream events; spec-sdk.md defineAgent.
+**Journey**: J7 (API consumers rely on documented contract).
+**Acceptance criteria**: All three specs describe the same contract; JSONB typed in Drizzle; validation at API deploy boundary.
+
+Files to touch:
+- `packages/sdk/src/types.ts` (or agent definition module) -- `ResponseOutputConfig`
+- `packages/shared` -- shared type export if needed for worker/api
+- `docs/spec-sdk.md`, `docs/spec-data-model.md`, `docs/spec-api.md`
+
+#### 4.5.2 Database migration
+
+**What**: Add `output_config` (jsonb, default empty / text mode) to `agent_versions`. Optional: `parsed_output`, `output_validation` on `run_steps` or equivalent JSONB on final assistant step per existing step schema.
+**Spec reference**: spec-data-model.md.
+**Journey**: J3 (local SQLite parity column or documented dev fallback).
+**Acceptance criteria**: Migration applied; RLS unchanged; backward compatible (existing versions → default text mode).
+
+Files to create/change:
+- `packages/db/src/schema/*.ts` -- column(s)
+- `packages/db/drizzle/*.sql` -- migration
+
+#### 4.5.3 Deploy pipeline
+
+**What**: Serialize `output` from SDK into `agent_versions.output_config` on deploy.
+**Journey**: J5 (production agent version carries contract).
+**Acceptance criteria**: New deploy shows `output_config` in DB; invalid config rejected at API with typed error.
+
+#### 4.5.4 Worker: parse, validate, enforce strict
+
+**What**: Load config per run; for `json` mode, set provider parameters for JSON/structured output where supported; on final assistant message, parse and validate with Ajv or existing stack; write metadata to steps/run.
+**Spec reference**: architecture-v1.md streaming; technology-decisions.md LLM providers.
+**Journey**: J4 (evals see stable machine-readable output).
+**Acceptance criteria**: `strict: true` invalid output yields documented run status/error; `strict: false` persists validation error without silent pass.
+
+Files to touch:
+- `apps/worker/src/activities/*` -- agent run / LLM completion path
+- `packages/shared` or worker util -- parse/validate helper
+
+#### 4.5.5 API + SSE
+
+**What**: Final run result and stream completion event include `parsed_output` and `output_validation` when `mode === "json"`. Document streaming rule: deltas are raw tokens; **only final** payload is validated in v1.
+**Journey**: J3, J7.
+**Acceptance criteria**: OpenAPI or spec examples updated; integration test covers stream + non-stream.
+
+#### 4.5.6 Client SDK
+
+**What**: Expose types and fields on `RunResult` / stream consumer.
+**Acceptance criteria**: Example in `packages/client` README or docs uses structured agent.
+
+#### 4.5.7 Eval integration
+
+**What**: `json_schema` grader may use agent version schema when case does not specify one; document in phase-4-brief cross-link.
+**Journey**: J4.
+**Acceptance criteria**: At least one integration test: structured agent + eval case without duplicate schema.
+
+### Testing
+
+- **Unit**: Parse + validate helper (valid / invalid JSON / schema violation).
+- **Integration**: Deploy structured agent; run; assert DB + API response.
+- **Integration**: Strict failure path status code and run record.
+
+### User Journey Verification
+
+- **J7**: API client receives `parsed_output` for json-mode agent.
+- **J4**: Eval grades structured output using version schema default.
+
+### Definition of Done
+
+- Demo: Deploy agent with `mode: "json"`, schema, `strict: true`; successful run returns parsed object; intentional bad output fails per spec; eval case uses default schema. See `docs/phase-4-5-brief.md`.
 
 ---
 
@@ -2794,6 +2879,7 @@ Before declaring the platform ready for private beta (end of Milestone 4, week 1
 - [ ] Phase 3: SSE streaming, client SDK, sessions, OpenAI compat endpoint
 - [ ] Phase 3.5: Design tokens, sidebar, retroactive UI for Phases 1-3 (agent list, run list, trace viewer, settings)
 - [ ] Phase 4: 10 graders, eval experiments, baselines, CLI eval commands, CI integration + eval UI slice
+- [ ] Phase 4.5: Response contract on agent versions (`text`/`json`, optional JSON Schema, strict policy), worker parse/validate, SSE/API/SDK fields, eval grader default schema
 - [ ] Phase 5: Knowledge bases, document upload, embeddings, hybrid retrieval, RAG + KB upload UI
 - [ ] Phase 6: MCP client, encrypted secrets, tool policies, approval gates + tools UI
 - [ ] Phase 6b: Connector catalog with 15 managed connectors, OAuth flows, connector catalog UI + OAuth callback

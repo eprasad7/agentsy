@@ -8,7 +8,7 @@ import {
   type ExperimentConfig,
 } from '@agentsy/db';
 import { newId } from '@agentsy/shared';
-import { eq, and, desc, lt, gt, sql } from 'drizzle-orm';
+import { eq, and, desc, lt, gt } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 

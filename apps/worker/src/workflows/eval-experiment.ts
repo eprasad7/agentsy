@@ -1,10 +1,5 @@
 import { proxyActivities } from '@temporalio/workflow';
 
-const activities = proxyActivities<typeof import('../activities/index.js')>({
-  startToCloseTimeout: '5 minutes',
-  retry: { maximumAttempts: 2 },
-});
-
 const evalActivities = proxyActivities<typeof import('../activities/eval-grading.js')>({
   startToCloseTimeout: '10 minutes',
   retry: { maximumAttempts: 1 },
