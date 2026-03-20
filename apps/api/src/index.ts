@@ -18,6 +18,7 @@ import { organizationRoutes, memberRoutes } from './routes/organizations.js';
 import { agentRoutes, agentVersionRoutes } from './routes/agents.js';
 import { runRoutes } from './routes/runs.js';
 import { secretRoutes } from './routes/secrets.js';
+import { sessionRoutes } from './routes/sessions.js';
 import { initTemporalClient } from './lib/temporal.js';
 
 const app = Fastify({
@@ -82,6 +83,7 @@ async function start() {
     agentRoutes(app, db);
     agentVersionRoutes(app, db);
     runRoutes(app, db);
+    sessionRoutes(app, db);
 
     // Concurrent run limiter — only for run creation
     app.addHook('preHandler', async (request) => {
