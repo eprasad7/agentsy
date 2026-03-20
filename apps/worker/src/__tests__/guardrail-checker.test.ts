@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+
 import { checkGuardrails, type LoopState } from '../guardrails/guardrail-checker.js';
 
 function makeState(overrides: Partial<LoopState> = {}): LoopState {

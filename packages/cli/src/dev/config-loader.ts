@@ -1,6 +1,7 @@
-import { createJiti } from 'jiti';
 import { resolve } from 'node:path';
+
 import type { AgentConfig } from '@agentsy/sdk';
+import { createJiti } from 'jiti';
 
 /**
  * Load agentsy.config.ts from the current working directory using jiti.

@@ -1,5 +1,5 @@
-import { CAPABILITY_CLASS_MODELS } from '@agentsy/shared';
 import type { VersionModelSpec } from '@agentsy/db';
+import { CAPABILITY_CLASS_MODELS } from '@agentsy/shared';
 
 /**
  * Resolve a model spec to a concrete model string.

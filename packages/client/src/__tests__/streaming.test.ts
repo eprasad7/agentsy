@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+
 import { parseSSEStream } from '../streaming.js';
 
 function createMockResponse(chunks: string[]): Response {

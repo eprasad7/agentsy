@@ -1,10 +1,10 @@
+import type { RunInput } from '@agentsy/shared';
 import {
   proxyActivities,
   defineSignal,
   setHandler,
   condition,
 } from '@temporalio/workflow';
-import type { RunInput } from '@agentsy/shared';
 
 const activities = proxyActivities<typeof import('../activities/index.js')>({
   startToCloseTimeout: '5 minutes',

@@ -1,6 +1,6 @@
-import type { RunRequest, RunResponse, RunStreamEvent } from '../types.js';
 import type { AgentsyHttpClient } from '../client.js';
 import { parseSSEStream } from '../streaming.js';
+import type { RunRequest, RunResponse, RunStreamEvent } from '../types.js';
 
 export class AgentsResource {
   constructor(private readonly http: AgentsyHttpClient) {}

@@ -1,5 +1,5 @@
-import type { Session, Message, PaginatedResponse } from '../types.js';
 import type { AgentsyHttpClient } from '../client.js';
+import type { Session, Message, PaginatedResponse } from '../types.js';
 
 export class SessionsResource {
   constructor(private readonly http: AgentsyHttpClient) {}

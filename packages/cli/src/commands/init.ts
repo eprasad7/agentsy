@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+
 import type { Command } from 'commander';
 
 export function registerInitCommand(program: Command): void {

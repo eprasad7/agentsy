@@ -14,8 +14,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
-import { badRequest, notFound } from '../plugins/error-handler.js';
 import { getTemporalClient } from '../lib/temporal.js';
+import { badRequest, notFound } from '../plugins/error-handler.js';
 import { handleSSEConnection } from '../streaming/sse-handler.js';
 
 // ── Zod Schemas ─────────────────────────────────────────────────────

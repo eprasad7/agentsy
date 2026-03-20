@@ -1,6 +1,6 @@
+import { runEventChannel, runEventLogKey, type RedisRunEvent } from '@agentsy/shared';
 import type { FastifyReply } from 'fastify';
 import { Redis } from 'ioredis';
-import { runEventChannel, runEventLogKey, type RedisRunEvent } from '@agentsy/shared';
 
 /**
  * Handle an SSE connection for a run.
@@ -30,6 +30,7 @@ export async function handleSSEConnection(
   }
 
   const subscriber = new Redis(redisUrl, { maxRetriesPerRequest: 1, connectTimeout: 3000 });
+  // eslint-disable-next-line prefer-const -- reassigned in closure below
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   let closed = false;
 

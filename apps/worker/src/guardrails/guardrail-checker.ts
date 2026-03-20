@@ -1,5 +1,5 @@
-import { GUARDRAIL_DEFAULTS } from '@agentsy/shared';
 import type { VersionGuardrailsConfig } from '@agentsy/db';
+import { GUARDRAIL_DEFAULTS } from '@agentsy/shared';
 
 export interface LoopState {
   iteration: number;

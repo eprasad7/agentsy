@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
+
+import { agentsy } from '../agentsy.js';
 import { serializeAgentConfig, resolveModelString, zodToJsonSchema } from '../serialization.js';
 import type { AgentConfig } from '../types.js';
-import { agentsy } from '../agentsy.js';
 
 describe('resolveModelString', () => {
   it('returns string model as-is', () => {

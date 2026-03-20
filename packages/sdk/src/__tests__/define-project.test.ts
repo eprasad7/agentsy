@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+
 import { agentsy } from '../agentsy.js';
 
 describe('agentsy.defineProject', () => {

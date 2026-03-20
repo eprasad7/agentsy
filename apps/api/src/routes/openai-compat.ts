@@ -6,17 +6,17 @@ import {
   runs,
   type RunMetadata,
 } from '@agentsy/db';
-import { newId } from '@agentsy/shared';
 import type { RunInput } from '@agentsy/shared';
+import { newId } from '@agentsy/shared';
+import { runEventChannel, type RedisRunEvent } from '@agentsy/shared';
 import { eq, and, isNull, desc } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
-import { z } from 'zod';
 import { Redis } from 'ioredis';
-import { runEventChannel, type RedisRunEvent } from '@agentsy/shared';
+import { z } from 'zod';
 
 import type { DbClient } from '../lib/db.js';
-import { badRequest, notFound, validationError } from '../plugins/error-handler.js';
 import { getTemporalClient } from '../lib/temporal.js';
+import { badRequest, notFound, validationError } from '../plugins/error-handler.js';
 
 // ── Schema ──────────────────────────────────────────────────────────
 

@@ -1,5 +1,7 @@
 import { createInterface } from 'node:readline';
+
 import type { AgentConfig } from '@agentsy/sdk';
+
 import { runAgent } from './local-runner.js';
 
 /**

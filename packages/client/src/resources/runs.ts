@@ -1,5 +1,5 @@
-import type { RunResponse, RunStep, PaginatedResponse } from '../types.js';
 import type { AgentsyHttpClient } from '../client.js';
+import type { RunResponse, RunStep, PaginatedResponse } from '../types.js';
 
 export class RunsResource {
   constructor(private readonly http: AgentsyHttpClient) {}

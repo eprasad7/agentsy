@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+
 import { resolveModel, detectProvider } from '../providers/model-registry.js';
 
 describe('resolveModel', () => {

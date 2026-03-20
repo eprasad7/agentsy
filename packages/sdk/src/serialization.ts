@@ -1,5 +1,5 @@
-import { z } from 'zod';
 import { CAPABILITY_CLASS_MODELS } from '@agentsy/shared';
+import { z } from 'zod';
 
 import type { AgentConfig, ModelIdentifier } from './types.js';
 

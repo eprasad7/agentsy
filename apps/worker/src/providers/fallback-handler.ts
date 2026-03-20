@@ -1,4 +1,5 @@
 import type { LanguageModel } from 'ai';
+
 import { createModel } from './provider-factory.js';
 
 interface FallbackOptions {

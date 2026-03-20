@@ -1,13 +1,14 @@
-import Fastify from 'fastify';
 import { watch } from 'node:fs';
 import { resolve } from 'node:path';
-import { config as loadEnv } from 'dotenv';
 
 import type { AgentConfig } from '@agentsy/sdk';
+import { config as loadEnv } from 'dotenv';
+import Fastify from 'fastify';
+
 import { loadConfig } from './config-loader.js';
 import { runAgent, initMcpTools, disconnectMcpClients } from './local-runner.js';
-import { startRepl } from './terminal-repl.js';
 import { getPlaygroundHtml } from './playground.js';
+import { startRepl } from './terminal-repl.js';
 
 export interface DevServerOptions {
   port: number;

@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 
 import { createAuth } from './lib/auth.js';
 import { createDb } from './lib/db.js';
+import { initTemporalClient } from './lib/temporal.js';
 import { registerAuthMiddleware } from './middleware/auth.js';
 import { checkConcurrentRunLimit } from './middleware/concurrent-run-limiter.js';
 import { registerIdempotencyMiddleware } from './middleware/idempotency.js';
@@ -10,17 +11,16 @@ import { registerRlsMiddleware } from './middleware/rls.js';
 import { registerCors } from './plugins/cors.js';
 import { registerErrorHandler } from './plugins/error-handler.js';
 import { registerRequestLogger } from './plugins/request-logger.js';
+import { agentRoutes, agentVersionRoutes } from './routes/agents.js';
 import { apiKeyRoutes } from './routes/api-keys.js';
 import { environmentRoutes } from './routes/environments.js';
 import { healthRoutes } from './routes/health.js';
 import { onboardingRoutes } from './routes/onboarding.js';
+import { openaiCompatRoutes } from './routes/openai-compat.js';
 import { organizationRoutes, memberRoutes } from './routes/organizations.js';
-import { agentRoutes, agentVersionRoutes } from './routes/agents.js';
 import { runRoutes } from './routes/runs.js';
 import { secretRoutes } from './routes/secrets.js';
 import { sessionRoutes } from './routes/sessions.js';
-import { openaiCompatRoutes } from './routes/openai-compat.js';
-import { initTemporalClient } from './lib/temporal.js';
 
 const app = Fastify({
   logger: {

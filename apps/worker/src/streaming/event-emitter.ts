@@ -1,5 +1,5 @@
-import { Redis } from 'ioredis';
 import { runEventChannel, runEventLogKey, type RunStreamEvent, type RedisRunEvent } from '@agentsy/shared';
+import { Redis } from 'ioredis';
 
 let redis: Redis | null = null;
 

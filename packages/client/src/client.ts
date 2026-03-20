@@ -1,8 +1,8 @@
-import type { AgentsyClientConfig } from './types.js';
 import { createErrorFromResponse } from './errors.js';
 import { AgentsResource } from './resources/agents.js';
 import { RunsResource } from './resources/runs.js';
 import { SessionsResource } from './resources/sessions.js';
+import type { AgentsyClientConfig } from './types.js';
 
 const DEFAULT_BASE_URL = 'https://api.agentsy.com';
 const DEFAULT_TIMEOUT = 30_000;
