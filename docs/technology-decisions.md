@@ -219,9 +219,9 @@ model_policy:
 
 **Decision**: **Platform-managed OAuth proxy** for common integrations + **user-provided API keys** for custom tools.
 
-For the top 20 integrations (Slack, GitHub, Google Workspace, Salesforce, Jira, etc.), Agentsy manages the OAuth flow — user authorizes once, we store refresh tokens in the secrets vault, and inject access tokens at tool-call time.
+For the top 20 integrations (Slack, GitHub, Google Workspace, Salesforce, Jira, etc.), Agentsy manages the OAuth flow — user authorizes once, we store refresh tokens in the org's encrypted secrets in PostgreSQL, and inject access tokens at tool-call time.
 
-For custom tools, users provide API keys stored in the per-tenant secrets vault.
+For custom tools, users provide API keys stored in the per-tenant encrypted secrets store.
 
 **Rejected**:
 - ❌ **Composio / Nango (third-party OAuth proxy)**: Adds dependency and cost. Build the OAuth flows ourselves for the top integrations. Only consider Nango if we need 100+ integrations quickly.

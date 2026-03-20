@@ -58,6 +58,21 @@
 | J20 | Code Execution in Agent Runs | Phase 11.5 | Phase 6 |
 | J19 | Agent Auto-Evolution | Phase 12 | Phase 4, 11, 11.5 |
 
+### Beta Scope Boundary
+
+Phases 0–10 constitute the **private beta** (PRD Milestones 1–4, weeks 1–16). Phases 11, 11.5, and 12 are **post-beta** features designed alongside the beta but implemented after it ships.
+
+| Surface | Beta (Phases 0–10) | Post-Beta (Phases 11–12) |
+|---------|-------------------|-------------------------|
+| **Database** | 25 tables (3.1–3.25) | +4 tables: `run_artifacts`, `agent_repos`, `evolution_sessions`, `evolution_mutations` |
+| **API** | Sections 1–20 of spec-api.md | +Sections 21–24: Artifacts, Repos, Pipelines, Evolution |
+| **SDK** | `defineAgent`, `defineTool`, `defineProject`, eval SDK, client SDK | +`defineEvolution`, `CodeExecutionConfig` |
+| **CLI** | `init`, `dev`, `deploy`, `rollback`, `eval`, `kb`, `secrets`, `connectors`, `logs` | +`push`, `pull`, `evolve` |
+| **Dashboard** | Agent CRUD, runs, traces, evals, KB, connectors, alerts, settings | +CI/CD tab, repo tab, evolution tab, code execution trace viewer |
+| **Infra** | Fly.io (API, web, worker), Fly Managed Postgres, Redis, Temporal Cloud | +E2B sandbox, Git transport layer |
+
+**Rule**: During beta implementation, do NOT implement post-beta tables, endpoints, SDK types, or CLI commands. The specs document them for design continuity, but they ship in their own phases.
+
 ### Prerequisites (Accounts & Credentials)
 
 Before starting Phase 0, obtain the following:
@@ -145,7 +160,7 @@ Files to create:
 
 #### 0.5 Set up `@agentsy/db` with Drizzle schema and enum types
 
-**What**: Implement the full Postgres schema using Drizzle ORM, including all enum types and all 25 tables (21 core + 2 connector + 2 alerting/notification tables).
+**What**: Implement the beta Postgres schema using Drizzle ORM, including all enum types and all 25 beta tables (3.1–3.25: 21 core + 2 connector + 2 alerting/notification tables). Post-beta tables (3.26 `run_artifacts`, 3.27 `agent_repos`, 3.28 `evolution_sessions`, 3.29 `evolution_mutations`) are added in their respective phases (11, 11.5, 12) and are NOT created in Phase 0.
 **Spec reference**: spec-data-model.md sections 2 and 3 (all tables 3.1 through 3.25).
 **Journey**: Foundation for all data operations.
 **Acceptance criteria**: `drizzle-kit generate` produces SQL migration files. Schema compiles with correct TypeScript types.
@@ -2696,7 +2711,7 @@ The following amendments address gaps identified during a comprehensive review o
 
 Before declaring the platform ready for private beta (end of Milestone 4, week 16):
 
-- [ ] Phase 0: Monorepo builds, infra deployed, CI passes, all 25 tables in schema
+- [ ] Phase 0: Monorepo builds, infra deployed, CI passes, all 25 beta tables in schema
 - [ ] Phase 1: Signup, org creation, API keys, RLS, rate limiting, concurrent run enforcement, idempotency
 - [ ] Phase 2: defineAgent + defineTool work (string + capability class model syntax), agent runs with tools, guardrails enforced (including output validators), MCP stdio in local dev
 - [ ] Phase 3: SSE streaming, client SDK, sessions, OpenAI compat endpoint

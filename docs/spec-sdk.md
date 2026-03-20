@@ -719,7 +719,7 @@ export interface EvolutionDefinition {
  * Provides access to platform services without requiring direct imports.
  */
 export interface ToolContext {
-  /** Retrieve a secret value by name from the org's secrets vault */
+  /** Retrieve a secret value by name from the org's encrypted secrets in PostgreSQL */
   getSecret(name: string): Promise<string>;
 
   /** The current run ID (run_...) */

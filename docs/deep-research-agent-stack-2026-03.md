@@ -405,7 +405,7 @@ MCP is the de facto standard for agent-tool communication, adopted by Anthropic,
 
 ### Tool Security Patterns
 
-- **Authentication**: OAuth 2.0 for remote MCP servers; per-tenant credential management via secrets vault
+- **Authentication**: OAuth 2.0 for remote MCP servers; per-tenant credential management via encrypted secrets store
 - **Sandboxing**: Remote MCP servers provide natural network-boundary isolation; local stdio servers need process-level sandboxing
 - **Input validation**: JSON Schema at the MCP server boundary
 - **Rate limiting**: Per-tool, per-tenant rate limits

@@ -20,12 +20,12 @@ Three separate Fly apps, each independently scalable. Start single-region (iad).
 
 ### Data Services (on Fly)
 
-Self-managed PostgreSQL and Redis running on Fly Machines with persistent volumes. Same private network as app Machines — sub-1ms latency, no cross-provider hops.
+Fly Managed Postgres for the primary database, self-managed Redis on a Fly Machine with a persistent volume. Same private network as app Machines — sub-1ms latency, no cross-provider hops.
 
-| App | Tech | Fly Region | Machines | Volume | Purpose |
-|-----|------|-----------|----------|--------|---------|
-| `agentsy-db` | PostgreSQL 16 + pgvector | iad | 1 primary + 1 replica | 20GB each | Primary database, vector store |
-| `agentsy-redis` | Redis 7 | iad | 1 | 1GB | Rate limiting, caching, pub/sub |
+| App | Tech | Fly Region | Plan / Machines | Purpose |
+|-----|------|-----------|-----------------|---------|
+| `agentsy-db` | PostgreSQL 16 + pgvector | iad | Fly Managed Postgres (`launch-2` plan) | Primary database, vector store |
+| `agentsy-redis` | Redis 7 | iad | 1 Machine + 1GB volume | Rate limiting, caching, pub/sub |
 
 ### Object Storage (on Fly)
 
@@ -175,10 +175,8 @@ ALTER SYSTEM SET work_mem = '16MB';
 ALTER SYSTEM SET maintenance_work_mem = '128MB';
 ALTER SYSTEM SET max_connections = 100;
 
--- WAL settings for durability
-ALTER SYSTEM SET wal_level = 'replica';
-ALTER SYSTEM SET archive_mode = 'on';
-ALTER SYSTEM SET archive_command = 'test ! -f /data/wal_archive/%f && cp %p /data/wal_archive/%f';
+-- WAL and replication are managed automatically by Fly MPG.
+-- No manual archive_command or wal_level configuration needed.
 
 SELECT pg_reload_conf();
 ```
@@ -237,7 +235,7 @@ Set secrets per app. Fly injects them as environment variables at runtime. Secre
 ```bash
 # API secrets
 fly secrets set -a agentsy-api \
-  DATABASE_URL="postgres://agentsy:PASSWORD@agentsy-db.internal:5432/agentsy" \
+  DATABASE_URL="postgres://agentsy:PASSWORD@agentsy-db.flycast:5432/agentsy" \
   REDIS_URL="redis://:PASSWORD@agentsy-redis.internal:6379" \
   TEMPORAL_ADDRESS="namespace.tmprl.cloud:7233" \
   TEMPORAL_NAMESPACE="agentsy-prod" \
@@ -258,7 +256,7 @@ fly secrets set -a agentsy-web \
 
 # Worker secrets
 fly secrets set -a agentsy-worker \
-  DATABASE_URL="postgres://agentsy:PASSWORD@agentsy-db.internal:5432/agentsy" \
+  DATABASE_URL="postgres://agentsy:PASSWORD@agentsy-db.flycast:5432/agentsy" \
   REDIS_URL="redis://:PASSWORD@agentsy-redis.internal:6379" \
   TEMPORAL_ADDRESS="namespace.tmprl.cloud:7233" \
   TEMPORAL_NAMESPACE="agentsy-prod" \
@@ -432,7 +430,7 @@ Set up alerts for:
 | agentsy-web | 2 | shared-cpu-1x | 512MB |
 | agentsy-api | 2 | shared-cpu-2x | 1GB |
 | agentsy-worker | 2 | shared-cpu-2x | 2GB |
-| agentsy-db | 1+1 replica | shared-cpu-2x | 2GB |
+| agentsy-db | Fly MPG `launch-2` plan | 2 vCPU / 4GB RAM / 40GB storage | (managed) |
 | agentsy-redis | 1 | shared-cpu-1x | 512MB |
 
 ### Growth (100+ teams)
@@ -442,7 +440,7 @@ Set up alerts for:
 | agentsy-web | 2 | shared-cpu-2x | 1GB |
 | agentsy-api | 4 | performance-2x | 4GB |
 | agentsy-worker | 4-8 | performance-2x | 4GB |
-| agentsy-db | 1+2 replicas | performance-4x | 8GB |
+| agentsy-db | Fly MPG (scaled plan) | 4 vCPU / 8GB RAM | (managed) |
 | agentsy-redis | 1 | shared-cpu-2x | 1GB |
 
 **Scaling workers**: Workers scale based on concurrent agent runs. Each worker machine can handle multiple concurrent Temporal activities. Monitor Temporal task queue latency -- if tasks wait > 2s for a worker, add machines.
@@ -470,8 +468,7 @@ Fly is right for beta through early growth. Plan migration when:
 | Resource | Provider | Estimate/mo |
 |----------|----------|-------------|
 | Fly Machines — app (6 total) | Fly.io | ~$50-100 |
-| Fly Machines — Postgres (2) | Fly.io | ~$30-40 |
-| Fly Volumes — Postgres (2×20GB) | Fly.io | ~$6 |
+| Fly Managed Postgres (`launch-2` plan) | Fly.io | ~$35-45 |
 | Fly Machines — Redis (1) | Fly.io | ~$5-10 |
 | Fly Volumes — Redis (1GB) | Fly.io | ~$0.15 |
 | Tigris (10GB storage) | Fly.io | ~$1 |

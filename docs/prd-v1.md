@@ -84,7 +84,7 @@ Companies come to Agentsy to build, test, and run agents without worrying about 
 
 ### Beta Core vs. Full P0
 
-The requirements below are organized into **Beta Core** (the narrowest slice for private beta — weeks 1-12) and **P0 Remainder** (still P0, ships in weeks 13-16 before P1). The beta core is: runtime + tools + evals + basic observability. Memory, knowledge bases, secrets vault, MCP remote, deployment controls, and multi-tenancy hardening ship in the P0 remainder.
+The requirements below are organized into **Beta Core** (the narrowest slice for private beta — weeks 1-12) and **P0 Remainder** (still P0, ships in weeks 13-16 before P1). The beta core is: runtime + tools + evals + basic observability. Memory, knowledge bases, encrypted secrets store, MCP remote, deployment controls, and multi-tenancy hardening ship in the P0 remainder.
 
 **Beta Core (Milestones 1-3)**: Runtime engine, native tools, eval engine, trace viewer, CLI, basic dashboard, API.
 **P0 Remainder (Milestone 4)**: Memory/sessions, knowledge bases, secrets, MCP remote, versioning, environments, rate limiting, team management, connector catalog (15 managed integrations).
@@ -129,7 +129,7 @@ This separation means beta users can define agents, connect tools, run evals, an
 | R-2.4 | Tool execution with timeout (default: 30s per tool call) | Beta Core | Kill hung tools |
 | R-2.5 | Tool execution retry on transient failure (1 retry) | Beta Core | Auto-retry 5xx errors |
 | R-2.6 | Tool result size limit (default: 10KB, truncate with warning) | Beta Core | Prevent context window blowout |
-| R-2.7 | Per-tenant secrets vault for tool credentials | P0 | Encrypted at rest, never in logs or LLM context |
+| R-2.7 | Per-tenant encrypted secrets store for tool credentials | P0 | Encrypted at rest (AES-256-GCM in PostgreSQL), never in logs or LLM context |
 | R-2.8 | Code execution sandbox via E2B | P1 | For agents that generate and run code |
 | R-2.9 | Tool risk classification: `read` / `write` / `admin` | Beta Core | Declared in tool definition, enforced by runtime |
 | R-2.10 | Write-tool approval gate: configurable human-in-the-loop for `write` and `admin` tools | Beta Core | Default: auto-approve reads, require approval for writes in production. Configurable per-tool and per-environment |
@@ -694,7 +694,7 @@ These resolve contradictions the audit found across our doc suite.
 - [ ] Conversation persistence (multi-turn sessions)
 - [ ] Knowledge base upload + RAG retrieval
 - [ ] Hybrid search (vector + keyword)
-- [ ] Per-tenant secrets vault (encrypted Postgres columns)
+- [ ] Per-tenant encrypted secrets store (AES-256-GCM encrypted Postgres columns)
 - [ ] MCP remote server connections (with auth)
 - [ ] Agent versioning with prompt diff viewer
 - [ ] Environment management (dev/staging/prod)
