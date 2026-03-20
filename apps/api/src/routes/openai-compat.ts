@@ -146,12 +146,20 @@ export function openaiCompatRoutes(app: FastifyInstance, db: DbClient): void {
       updatedAt: now,
     });
 
-    // Commit the scoped transaction so the run row is visible to the worker
+    // Commit and release the scoped transaction so the run row is visible
+    // to the worker. Release the reserved connection immediately.
     if (request.scopedDb) {
       try {
         const { sql: sqlTag } = await import('drizzle-orm');
         await d.execute(sqlTag`COMMIT`);
       } catch { /* already committed */ }
+      try {
+        const ext = request as { _reservedConn?: { end: () => Promise<void> }; scopedDb?: unknown };
+        await ext._reservedConn?.end();
+        ext._reservedConn = undefined;
+        ext.scopedDb = undefined;
+        request.scopedDb = undefined;
+      } catch { /* best effort */ }
     }
 
     // Post-commit: use shared pool for workflow start, polling, SSE

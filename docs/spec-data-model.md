@@ -462,6 +462,7 @@ export const agentVersions = pgTable(
       .notNull()
       .default({}),
     modelParams: jsonb("model_params").$type<ModelParams>().default({}),
+    outputConfig: jsonb("output_config").$type<ResponseOutputConfig>().notNull().default({ mode: "text" }), // Phase 4.5: response contract
     description: text("description"), // changelog / commit message for this version
     createdBy: varchar("created_by", { length: 255 }), // user_id (Better Auth)
     createdAt: timestamp("created_at", { withTimezone: true })

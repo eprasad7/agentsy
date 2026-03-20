@@ -264,14 +264,21 @@ export function runRoutes(app: FastifyInstance, db: DbClient): void {
       updatedAt: now,
     });
 
-    // Commit the scoped transaction NOW so the run row is visible to the
-    // worker (which uses its own DB connection). The RLS middleware's
-    // onResponse commit will be a harmless no-op.
+    // Commit and release the scoped transaction so the run row is visible
+    // to the worker. Release the reserved connection immediately to avoid
+    // pinning it for the duration of sync polling or SSE streaming.
     if (request.scopedDb) {
       try {
         const { sql: sqlTag } = await import('drizzle-orm');
         await d.execute(sqlTag`COMMIT`);
       } catch { /* already committed */ }
+      try {
+        const ext = request as { _reservedConn?: { end: () => Promise<void> }; scopedDb?: unknown };
+        await ext._reservedConn?.end();
+        ext._reservedConn = undefined;
+        ext.scopedDb = undefined;
+        request.scopedDb = undefined;
+      } catch { /* best effort */ }
     }
 
     // From here, use the shared pool — the row is committed and visible
