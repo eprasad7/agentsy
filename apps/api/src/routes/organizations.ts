@@ -59,7 +59,7 @@ export function organizationRoutes(app: FastifyInstance, db: DbClient): void {
     const result = await db
       .update(organizations)
       .set(updates)
-      .where(eq(organizations.id, orgId))
+      .where(and(eq(organizations.id, orgId), isNull(organizations.deletedAt)))
       .returning();
 
     const org = result[0]!;

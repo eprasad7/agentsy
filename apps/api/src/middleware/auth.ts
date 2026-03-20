@@ -1,4 +1,4 @@
-import { apiKeys, organizations } from '@agentsy/db';
+import { apiKeys, organizationMembers, organizations } from '@agentsy/db';
 import { eq, and, isNull } from 'drizzle-orm';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
@@ -54,11 +54,45 @@ export function registerAuthMiddleware(
         if (session?.session && session?.user) {
           request.userId = session.user.id;
           request.authMethod = 'session';
-          // Session-based auth needs org resolution from the user's active organization
-          // This is handled by Better Auth's organization plugin
+
+          // Resolve org membership for the session user
+          // Skip for onboarding (user has no org yet)
+          if (!request.url.startsWith('/v1/onboarding')) {
+            const membership = await db
+              .select({
+                orgId: organizationMembers.orgId,
+                role: organizationMembers.role,
+              })
+              .from(organizationMembers)
+              .where(eq(organizationMembers.userId, session.user.id))
+              .limit(1);
+
+            if (!membership[0]) {
+              throw forbidden('No organization membership found');
+            }
+
+            request.orgId = membership[0].orgId;
+            request.userRole = membership[0].role as 'admin' | 'member';
+
+            // Fetch org plan
+            const orgResult = await db
+              .select({ plan: organizations.plan })
+              .from(organizations)
+              .where(
+                and(eq(organizations.id, membership[0].orgId), isNull(organizations.deletedAt)),
+              )
+              .limit(1);
+
+            if (orgResult[0]) {
+              request.orgPlan = orgResult[0].plan;
+            }
+          }
+
           return;
         }
-      } catch {
+      } catch (err) {
+        // Re-throw intentional API errors (e.g. 403 no membership)
+        if (err instanceof Error && err.name === 'ApiError') throw err;
         // Session auth failed, fall through
       }
     }
