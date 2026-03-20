@@ -1,24 +1,44 @@
-// Temporal client connection — will use mTLS in production
-// For now, exports the configuration shape
+// Temporal client connection — mTLS in production via PEM strings in env (Fly secrets)
 
 export interface TemporalConfig {
   address: string;
   namespace: string;
+  /** Client cert PEM (not a filesystem path) */
   tls?: {
-    clientCertPath: string;
-    clientKeyPath: string;
+    clientCert: string;
+    clientKey: string;
   };
 }
 
+function readClientCertPem(): string | undefined {
+  return (
+    process.env['TEMPORAL_CLIENT_CERT'] ??
+    process.env['TEMPORAL_TLS_CERT'] ??
+    undefined
+  );
+}
+
+function readClientKeyPem(): string | undefined {
+  return (
+    process.env['TEMPORAL_CLIENT_KEY'] ??
+    process.env['TEMPORAL_TLS_KEY'] ??
+    undefined
+  );
+}
+
 export function getTemporalConfig(): TemporalConfig {
+  const cert = readClientCertPem();
+  const key = readClientKeyPem();
+
   return {
     address: process.env['TEMPORAL_ADDRESS'] ?? 'localhost:7233',
     namespace: process.env['TEMPORAL_NAMESPACE'] ?? 'default',
-    tls: process.env['TEMPORAL_TLS_CERT']
-      ? {
-          clientCertPath: process.env['TEMPORAL_TLS_CERT'] ?? '',
-          clientKeyPath: process.env['TEMPORAL_TLS_KEY'] ?? '',
-        }
-      : undefined,
+    tls:
+      cert && key
+        ? {
+            clientCert: cert,
+            clientKey: key,
+          }
+        : undefined,
   };
 }

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/bundle-workflows.mjs",
     "dev": "tsx watch src/index.ts",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@agentsy/db": "workspace:*",
-    "@agentsy/shared": "workspace:*"
+    "@agentsy/shared": "workspace:*",
+    "@temporalio/worker": "^1.11.7",
+    "@temporalio/workflow": "^1.11.7"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
